@@ -1,0 +1,111 @@
+# Teaching it your cats
+
+The model is not trained from scratch. A frozen ImageNet backbone
+(`mobilenet_v3_small`) turns each crop into a 576-number vector, and a logistic
+regression on top learns to separate three cats from a few hundred vectors.
+Training takes seconds and can be redone on the Pi itself.
+
+## 1. Import the phone photos you already have
+
+One folder per cat, then:
+
+```
+python -m catbowl import --src ~/Photos/mochi   --label mochi
+python -m catbowl import --src ~/Photos/pepper  --label pepper
+python -m catbowl import --src ~/Photos/biscuit --label biscuit
+```
+
+Each photo is run through an SSDLite COCO detector, the cat is cropped out, and
+the crop lands in `data/crops/<label>/`. Photos where no cat is found are skipped
+and counted; if most of your photos are already tight close-ups, re-run with
+`--keep-uncropped`.
+
+Aim for **60+ crops per cat**, varied across lighting, angle and how curled up
+they are. Photos where two cats are in frame are worse than useless — the
+detector picks one and may label the wrong animal. Set those aside.
+
+## 2. Capture from the actual rig
+
+Photos from your phone and frames from a fixed webcam under kitchen lighting do
+not look alike, and the difference costs real accuracy. So once the cameras are
+mounted, get each cat to the bowl and record:
+
+```
+python -m catbowl capture --bowl bowl1 --label mochi --seconds 120
+```
+
+This uses that bowl's camera and detector settings and saves a crop every 0.4 s
+while something is moving. Hold still for the first few seconds — the motion
+detector is learning the empty scene. Fifty on-rig crops per cat are worth more
+than two hundred phone photos.
+
+### The optional `_other` class
+
+Make a `data/crops/_other/` folder with crops of anything that is *not* one of
+your cats: a hand reaching in, a neighbour's cat at the window, the empty bowl,
+a dog. `_other` is trained as a normal class but can never win a vote, so it
+gives the model an explicit place to put "something is there, but not a cat I
+know" instead of forcing it toward the nearest cat.
+
+## 3. Train
+
+```
+python -m catbowl train
+```
+
+Output:
+
+```
+images: 412  vectors: 824  raw accuracy: 97.1%
+
+confusion matrix (rows = truth, columns = predicted)
+              biscuit    mochi   pepper
+   biscuit         34        1        0
+     mochi          0       36        2
+    pepper          1        0       29
+
+confidence threshold sweep
+  thresh  coverage  precision
+    0.40     98.1%      96.2%
+    0.50     96.1%      97.0%
+    ...
+suggested recognition.min_confidence: 0.72
+```
+
+Read the confusion matrix, not just the accuracy. If two cats are confused with
+each other specifically, more photos of *those two* is the fix.
+
+Put the suggested threshold into `config/bowls.yaml`. The trade-off it encodes:
+
+- **Higher** → fewer wrong lids opening, more "the bowl ignored me" moments.
+- **Lower** → the opposite.
+
+For cats on different prescription diets, bias high. `--target-precision 0.995`
+makes `train` suggest a stricter value.
+
+## 4. Check it, then keep improving it
+
+```
+python -m catbowl eval --data data/crops --threshold 0.8
+```
+
+reports how many crops would open the right lid, the wrong lid, or no lid, and
+lists the specific files it got wrong — look at those images, they usually
+explain themselves (motion blur, half a cat, the tail end of a cat).
+
+Then run the feeder with `--collect`. Every state change saves the crop that
+caused it into `data/collected/<label>/`. After a week, sort those into
+`data/crops/` (fixing any wrong labels as you go) and retrain. This is where
+most of the eventual accuracy comes from.
+
+## If two of your cats look nearly identical
+
+Vision alone struggles with, say, two black shorthairs. Options, in order:
+
+1. More on-rig crops, especially of the confusable pair.
+2. Raise `min_confidence` and `votes_required` — slower, but far fewer mistakes.
+3. Switch `recognition.model` to `mobilenet_v3_large` (more accurate, ~3× slower
+   on a Pi 4; still fine at `loop_fps: 3`) and retrain.
+4. Add a distinguishing collar tag, or fall back to an RFID collar reader as the
+   identity source. Not what you asked for, but it is what commercial selective
+   feeders do, and it is honest about where pure vision runs out.

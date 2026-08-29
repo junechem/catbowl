@@ -1,0 +1,26 @@
+[Unit]
+Description=catbowl per-cat feeder
+After=network-online.target pigpiod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/catbowl
+ExecStart=/home/pi/catbowl/.venv/bin/python -m catbowl run --config config/bowls.yaml
+Restart=always
+RestartSec=5
+# If the process dies, systemd restarts it and the first thing FeederApp does is
+# drive every lid closed - so a crash leaves the bowls shut, not open.
+StandardOutput=journal
+StandardError=journal
+
+# Modest hardening; the service still needs /dev/video*, /dev/i2c-* and GPIO.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/pi/catbowl
+
+[Install]
+WantedBy=multi-user.target

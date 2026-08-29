@@ -1,0 +1,84 @@
+# catbowl configuration
+# ---------------------
+# Every value the rig needs. Change it and restart: `sudo systemctl restart catbowl`.
+
+recognition:
+  backend: torch                 # torch | tflite | mock
+  model: mobilenet_v3_small      # frozen ImageNet backbone used as a feature extractor
+  classifier: models/classifier.joblib
+  input_size: 224
+  # Below this confidence a frame counts as "unknown" and no lid moves.
+  # `catbowl train` prints a suggested value - start there.
+  min_confidence: 0.75
+  # A lid only moves when votes_required of the last vote_window frames agree.
+  # At loop_fps: 5 this means ~0.8s of consistent evidence.
+  vote_window: 6
+  votes_required: 4
+
+detector:
+  type: motion                   # motion (cheap) | ssdlite (selective, ~10x slower) | none
+  min_area_frac: 0.02            # ignore blobs smaller than 2% of the frame
+  pad_frac: 0.15
+  warmup_frames: 30              # frames spent learning the empty scene at startup
+  score_threshold: 0.5           # ssdlite only
+
+actuator:
+  driver: pca9685                # pca9685 | gpio | mock
+  i2c_address: 0x40
+  frequency: 50
+  move_speed_deg_s: 90           # slew limit. Lower = gentler lid, and safer round cats
+  step_deg: 3
+  min_pulse_us: 500              # MG996R; check your servo's datasheet
+  max_pulse_us: 2500
+
+loop_fps: 5                      # per-bowl inference rate. 5 is comfortable on a Pi 4
+status_port: 8080                # http://<pi>:8080/ - set to null to disable
+log_dir: logs
+snapshot_dir: null               # set a path (or use `run --collect`) to bank retraining data
+
+# Applied to every bowl, then overridden per bowl below.
+bowl_defaults:
+  camera:
+    width: 640
+    height: 480
+    fps: 10
+  servo:
+    closed_deg: 10
+    open_deg: 95
+    detach_when_idle: true       # cut PWM once the lid settles: no buzzing, no hot servo
+  policy:
+    open_confirm_s: 0.8          # the right cat must be seen this long before the lid lifts
+    close_delay_s: 10            # bowl must look empty this long before the lid drops
+    max_open_s: 900              # nobody eats for 15 minutes; something is stuck
+    close_on_intruder: true
+    intruder_grace_s: 2.0
+    cooldown_s: 3.0
+
+bowls:
+  - id: bowl1
+    cat: mochi
+    camera: {device: 0}
+    servo: {channel: 0}
+
+  - id: bowl2
+    cat: pepper
+    camera: {device: 2}
+    servo: {channel: 1}
+
+  - id: bowl3
+    cat: biscuit
+    camera: {device: 4}
+    servo: {channel: 2}
+
+# ---------------------------------------------------------------------------
+# Single-camera alternative
+# ---------------------------------------------------------------------------
+# One wide-angle camera above all three bowls. The bowls share the device (it is
+# opened once) and each takes its own slice of the frame via `roi: [x, y, w, h]`
+# in fractions of the frame. Place the bowls far enough apart that the slices do
+# not overlap, or a cat at bowl 2 will be judged by bowl 1's camera as well.
+#
+# bowls:
+#   - {id: bowl1, cat: mochi,   camera: {device: 0, width: 1280, height: 720, roi: [0.00, 0.2, 0.34, 0.8]}, servo: {channel: 0}}
+#   - {id: bowl2, cat: pepper,  camera: {device: 0, width: 1280, height: 720, roi: [0.33, 0.2, 0.34, 0.8]}, servo: {channel: 1}}
+#   - {id: bowl3, cat: biscuit, camera: {device: 0, width: 1280, height: 720, roi: [0.66, 0.2, 0.34, 0.8]}, servo: {channel: 2}}

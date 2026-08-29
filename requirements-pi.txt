@@ -1,0 +1,11 @@
+-r requirements.txt
+
+# PCA9685 servo driver over I2C (actuator.driver: pca9685)
+adafruit-circuitpython-servokit>=1.3.0
+
+# Servos wired straight to header pins (actuator.driver: gpio)
+pigpio>=1.78
+
+# CSI ribbon cameras (camera.device: "csi:0"). On Raspberry Pi OS this is better
+# installed with apt: sudo apt install -y python3-picamera2
+# picamera2>=0.3.12
