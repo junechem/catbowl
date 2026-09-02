@@ -1,7 +1,13 @@
 -r requirements.txt
 
-# PCA9685 servo driver over I2C (actuator.driver: pca9685)
-adafruit-circuitpython-servokit>=1.3.0
+# PCA9685 servo driver over I2C (actuator.driver: pca9685).
+#
+# smbus2, not adafruit-circuitpython-servokit. servokit pulls in Blinka, which
+# pulls in lgpio, which PyPI ships only as a source distribution linking against
+# a C library Debian does not package - so it cannot be built on Raspberry Pi OS
+# at all. smbus2 is pure Python and talks to /dev/i2c-1 directly; see
+# catbowl/pca9685.py.
+smbus2>=0.4
 
 # Servos wired straight to header pins (actuator.driver: gpio)
 pigpio>=1.78

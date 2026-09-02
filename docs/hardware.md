@@ -115,6 +115,12 @@ Rules that matter:
 Enable I2C once: `sudo raspi-config` → Interface Options → I2C → Yes, then
 `i2cdetect -y 1` should show the board at `0x40`.
 
+The chip is driven directly over `/dev/i2c-1` by `catbowl/pca9685.py`, through
+`smbus2` — pure Python, no compiled extension. There is deliberately no
+adafruit-circuitpython-servokit here: it depends on Blinka, which depends on
+lgpio, which PyPI ships only as a source distribution linking against a C
+library Debian does not package, so it cannot be built on Raspberry Pi OS.
+
 ## The lid
 
 Design goal: the plate should **lift up and clear**, not slide across like a

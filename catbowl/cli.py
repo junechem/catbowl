@@ -365,10 +365,10 @@ def cmd_doctor(args) -> int:
             print("      (run 'i2cdetect -y 1' - the PCA9685 should show at "
                   f"0x{cfg.actuator.i2c_address:02x})")
         try:
-            import adafruit_servokit  # noqa: F401
-            check("adafruit-circuitpython-servokit installed", True)
+            import smbus2  # noqa: F401
+            check("smbus2 installed", True)
         except ImportError:
-            check("adafruit-circuitpython-servokit installed", False, "pip install it on the Pi")
+            check("smbus2 installed", False, "pip install smbus2")
     elif cfg and cfg.actuator.driver == "gpio":
         try:
             import pigpio

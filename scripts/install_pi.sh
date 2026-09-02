@@ -35,22 +35,6 @@ python3 -m venv .venv
 echo "    torch (CPU build - PyPI's aarch64 wheel would pull ~2 GB of CUDA)"
 ./.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
 
-# lgpio, from Adafruit's prebuilt wheels rather than PyPI.
-#
-# adafruit-circuitpython-servokit depends on Blinka, which depends on lgpio.
-# PyPI ships lgpio as a source distribution only, and building it needs swig
-# *and* the liblgpio C library - which Debian does not package at all, so the
-# build gets as far as the linker and fails on "cannot find -llgpio". Adafruit
-# publishes statically linked wheels (cp313/cp314/cp315, aarch64) that need no
-# system library and no toolchain.
-#
-# --only-binary guarantees the wheel is used rather than pip quietly falling
-# back to compiling the PyPI sdist again.
-echo "    lgpio (prebuilt wheel - the PyPI sdist needs a C library Debian lacks)"
-./.venv/bin/pip install --only-binary=:all: \
-    --find-links https://github.com/adafruit/lgpio-python-wheels/raw/main/wheels/ \
-    lgpio || echo "    lgpio wheel unavailable for this Python/arch - see the URL above"
-
 ./.venv/bin/pip install -r requirements-pi.txt
 
 echo "==> I2C"

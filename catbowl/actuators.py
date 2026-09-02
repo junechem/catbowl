@@ -173,23 +173,25 @@ class MockActuator(ServoActuator):
 class PCA9685Servo(ServoActuator):
     """One or more channels of a shared 16-channel I2C PWM board."""
 
-    def __init__(self, name: str, servo, actuator: ActuatorConfig, kit):
+    def __init__(self, name: str, servo, actuator: ActuatorConfig, device):
         super().__init__(name, servo, actuator)
+        self._device = device
         self._channels = []
         for cfg in self.servos:
             if cfg.channel is None:
                 raise ActuatorError(f"{name}: servo.channel is required for the pca9685 driver")
-            channel = kit.servo[cfg.channel]
-            channel.set_pulse_width_range(actuator.min_pulse_us, actuator.max_pulse_us)
-            channel.actuation_range = 180
-            self._channels.append(channel)
+            self._channels.append(cfg.channel)
+
+    def _pulse_us(self, degrees: float) -> float:
+        lo, hi = self.cfg.min_pulse_us, self.cfg.max_pulse_us
+        return lo + (degrees / 180.0) * (hi - lo)
 
     def _write_angle(self, index: int, degrees: float) -> None:
-        self._channels[index].angle = degrees
+        self._device.set_pulse_us(self._channels[index], self._pulse_us(degrees))
 
     def _detach(self) -> None:
         for channel in self._channels:
-            channel.angle = None   # adafruit's way of saying "stop the pulses"
+            self._device.release(channel)
 
 
 class GpioServo(ServoActuator):
@@ -219,19 +221,23 @@ class GpioServo(ServoActuator):
 class ActuatorFactory:
     """Owns the hardware handles shared between bowls (the I2C board, pigpio)."""
 
-    def __init__(self, cfg: ActuatorConfig):
+    def __init__(self, cfg: ActuatorConfig, device=None):
         self.cfg = cfg
-        self._kit = None
+        self._device = device
         self._pi = None
         self._made: list[Actuator] = []
 
-    def _servokit(self):
-        if self._kit is None:
-            from adafruit_servokit import ServoKit
+    def _pca9685(self):
+        if self._device is None:
+            from .pca9685 import PCA9685
 
             log.info("opening PCA9685 at 0x%02x", self.cfg.i2c_address)
-            self._kit = ServoKit(channels=16, address=self.cfg.i2c_address, frequency=self.cfg.frequency)
-        return self._kit
+            self._device = PCA9685(
+                bus=self.cfg.i2c_bus,
+                address=self.cfg.i2c_address,
+                frequency=self.cfg.frequency,
+            )
+        return self._device
 
     def _pigpio(self):
         if self._pi is None:
@@ -252,7 +258,7 @@ class ActuatorFactory:
         elif driver == "gpio":
             actuator = GpioServo(name, servo, self.cfg, self._pigpio())
         else:
-            actuator = PCA9685Servo(name, servo, self.cfg, self._servokit())
+            actuator = PCA9685Servo(name, servo, self.cfg, self._pca9685())
         self._made.append(actuator)
         return actuator
 
@@ -262,6 +268,12 @@ class ActuatorFactory:
                 actuator.shutdown()
             except Exception:  # pragma: no cover - best effort
                 log.exception("failed to park %s", actuator.name)
+        if self._device is not None:
+            try:
+                self._device.close()      # outputs off, oscillator stopped
+            except Exception:  # pragma: no cover - best effort
+                log.exception("failed to park the PCA9685")
+            self._device = None
         if self._pi is not None:
             self._pi.stop()
             self._pi = None

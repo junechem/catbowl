@@ -134,3 +134,32 @@ def test_a_single_servo_still_reads_as_one():
     assert actuator.servo is servo
     actuator.open()
     assert actuator.per_servo == [actuator.angles]
+
+
+def test_the_pca9685_actuator_writes_real_pulse_widths():
+    """End to end from an angle to the bytes on the bus, with no adafruit layer."""
+    from catbowl.actuators import PCA9685Servo
+    from catbowl.pca9685 import LED0_ON_L, FULL_OFF, PCA9685
+    from tests.test_pca9685 import FakeBus
+
+    bus = FakeBus()
+    device = PCA9685(address=0x40, frequency=50, smbus=bus)
+    cfg = ActuatorConfig(driver="pca9685", min_pulse_us=500, max_pulse_us=2500,
+                         move_speed_deg_s=10_000, step_deg=180)
+    lid = PCA9685Servo(
+        "bowl1",
+        [ServoConfig(channel=0, closed_deg=0, open_deg=180)],
+        cfg,
+        device,
+    )
+
+    base = LED0_ON_L
+
+    lid.move_to(0.5)                          # mid travel -> 1500 us -> 307 counts
+    counts = [off for reg, off in bus.writes if reg == base + 2]
+    assert bus.registers[base + 3] == FULL_OFF, "detach_when_idle parks the channel"
+    assert 307 & 0xFF in counts, "the slew must have passed through 1500 us"
+
+    lid.move_to(0.0)                          # min_pulse_us -> 500 us -> 102 counts
+    counts = [off for reg, off in bus.writes if reg == base + 2]
+    assert 102 in counts

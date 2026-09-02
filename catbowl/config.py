@@ -147,6 +147,7 @@ class DetectorConfig:
 @dataclass
 class ActuatorConfig:
     driver: str = "pca9685"       # pca9685 | gpio | mock
+    i2c_bus: int = 1              # /dev/i2c-1, the Pi's header bus
     i2c_address: int = 0x40
     frequency: int = 50           # Hz, standard analogue-servo frame rate
     move_speed_deg_s: float = 120.0   # slew limit; keeps the lid from slamming
