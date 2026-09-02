@@ -100,3 +100,42 @@ def test_gpio_driver_requires_pins():
               bowls=[{"id": "a", "cat": "x", "camera": {"device": 0}, "servo": {"gpio": 17}},
                      {"id": "b", "cat": "y", "camera": {"device": 2}, "servo": {"gpio": 27}}])
     assert app.bowl("b").servo.gpio == 27
+
+
+def test_a_bowl_may_drive_its_lid_with_several_servos():
+    app = build_config({
+        "bowl_defaults": {"servo": {"detach_when_idle": False}},
+        "bowls": [{
+            "id": "a", "cat": "mochi",
+            "servos": [
+                {"channel": 0, "closed_deg": 10, "open_deg": 95},
+                {"channel": 1, "closed_deg": 170, "open_deg": 85},
+            ],
+        }],
+    })
+    servos = app.bowl("a").servos
+    assert [s.channel for s in servos] == [0, 1]
+    assert [s.open_deg for s in servos] == [95, 85]
+    assert all(s.detach_when_idle is False for s in servos), "defaults reach every servo"
+    assert app.bowl("a").servo is servos[0], "bowl.servo still means the first one"
+
+
+def test_two_servos_on_one_lid_cannot_share_a_channel():
+    with pytest.raises(ConfigError, match="reuses servo channel"):
+        build_config({"bowls": [{
+            "id": "a", "cat": "mochi",
+            "servos": [{"channel": 0}, {"channel": 0}],
+        }]})
+
+
+def test_a_second_bowl_cannot_steal_a_ganged_channel():
+    with pytest.raises(ConfigError, match="reuses servo channel"):
+        build_config({"bowls": [
+            {"id": "a", "cat": "mochi", "servos": [{"channel": 0}, {"channel": 1}]},
+            {"id": "b", "cat": "pepper", "servo": {"channel": 1}},
+        ]})
+
+
+def test_an_empty_servos_list_is_rejected():
+    with pytest.raises(ConfigError, match="non-empty list"):
+        build_config({"bowls": [{"id": "a", "cat": "mochi", "servos": []}]})

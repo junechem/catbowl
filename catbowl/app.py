@@ -159,7 +159,7 @@ class FeederApp:
             if not bowl.enabled:
                 log.info("%s: disabled in config, skipping", bowl.id)
                 continue
-            actuator = self.factory.create(bowl.id, bowl.servo)
+            actuator = self.factory.create(bowl.id, bowl.servos)
             actuator.close()   # known state before anything else happens
             controller = BowlController(
                 bowl,

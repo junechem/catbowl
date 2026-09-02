@@ -220,10 +220,15 @@ def cmd_calibrate(args) -> int:
     cfg = load_config(args.config)
     bowl = cfg.bowl(args.bowl)
     factory = ActuatorFactory(cfg.actuator)
-    actuator = factory.create(bowl.id, bowl.servo)
+    actuator = factory.create(bowl.id, bowl.servos)
 
     print(f"Calibrating {bowl.id} ({bowl.cat}).")
-    print(f"  current: closed={bowl.servo.closed_deg}  open={bowl.servo.open_deg}")
+    for i, s in enumerate(bowl.servos):
+        where = f"channel {s.channel}" if s.channel is not None else f"gpio {s.gpio}"
+        print(f"  servo {i} ({where}): closed={s.closed_deg}  open={s.open_deg}")
+    if len(bowl.servos) > 1:
+        print("  the servos are ganged - typed angles are the FIRST servo's angle,")
+        print("  and the others follow proportionally through their own range.")
     print("Type an angle in degrees to move there, 'o'/'c' to test the configured")
     print("positions, or 'q' to quit. Keep fingers and cats clear.\n")
     try:
@@ -248,12 +253,19 @@ def cmd_calibrate(args) -> int:
             span = bowl.servo.open_deg - bowl.servo.closed_deg
             fraction = (degrees - bowl.servo.closed_deg) / span if span else 0.0
             actuator.move_to(min(1.0, max(0.0, fraction)))
-            print(f"  moved to {actuator.angle_for(actuator.position):.1f} deg "
-                  f"(fraction {actuator.position:.2f})")
+            shown = "  ".join(
+                f"servo{i}={deg:.1f}"
+                for i, deg in enumerate(actuator.angles_for(actuator.position))
+            )
+            print(f"  moved to {shown}  (fraction {actuator.position:.2f})")
     finally:
         factory.shutdown()
-    print("\nPut the angles you settled on into config/bowls.yaml as "
-          "servo.closed_deg / servo.open_deg.")
+    if len(bowl.servos) > 1:
+        print("\nPut the angles you settled on into config/bowls.yaml under this "
+              "bowl's servos: list - each servo has its own closed_deg/open_deg.")
+    else:
+        print("\nPut the angles you settled on into config/bowls.yaml as "
+              "servo.closed_deg / servo.open_deg.")
     return 0
 
 

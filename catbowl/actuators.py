@@ -61,23 +61,47 @@ class Actuator:
 
 
 class ServoActuator(Actuator):
-    """Shared slew logic for anything that takes an angle in degrees."""
+    """Shared slew logic for anything that takes an angle in degrees.
+
+    One lid, one or more servos. A wide lid usually has a servo on each hinge,
+    facing opposite ways, so the pair is *not* driven to the same angle: each
+    servo carries its own closed_deg/open_deg and the slew walks all of them
+    from their own closed angle to their own open angle together. Every step of
+    the ramp writes every servo before sleeping, so the two sides stay in
+    lockstep and the lid does not rack.
+    """
 
     def __init__(
         self,
         name: str,
-        servo: ServoConfig,
+        servo: ServoConfig | list[ServoConfig],
         actuator: ActuatorConfig,
         sleep: Callable[[float], None] = time.sleep,
     ):
         super().__init__(name, sleep)
-        self.servo = servo
+        # Callers may hand over a single ServoConfig or a list of them.
+        self.servos: list[ServoConfig] = list(servo) if isinstance(servo, (list, tuple)) else [servo]
+        if not self.servos:
+            raise ActuatorError(f"{name}: needs at least one servo")
         self.cfg = actuator
         self._attached = False
 
-    def angle_for(self, fraction: float) -> float:
+    @property
+    def servo(self) -> ServoConfig:
+        """The first servo. Kept so single-servo call sites read unchanged."""
+        return self.servos[0]
+
+    def angles_for(self, fraction: float) -> list[float]:
+        """Where each servo should sit for a lid that is *fraction* open."""
         fraction = min(1.0, max(0.0, fraction))
-        return self.servo.closed_deg + fraction * (self.servo.open_deg - self.servo.closed_deg)
+        return [
+            s.closed_deg + fraction * (s.open_deg - s.closed_deg)
+            for s in self.servos
+        ]
+
+    def angle_for(self, fraction: float) -> float:
+        """The first servo's angle. For display and for single-servo lids."""
+        return self.angles_for(fraction)[0]
 
     def move_to(self, fraction: float) -> None:
         fraction = min(1.0, max(0.0, fraction))
@@ -85,13 +109,18 @@ class ServoActuator(Actuator):
             start = self._position
             if abs(fraction - start) < 1e-3 and self._attached:
                 return
-            span = abs(self.angle_for(fraction) - self.angle_for(start))
+            # Step count comes from whichever servo has furthest to travel, so
+            # the slew rate limit holds for both sides of a mirrored pair.
+            span = max(
+                abs(end - begin)
+                for begin, end in zip(self.angles_for(start), self.angles_for(fraction))
+            )
             steps = max(1, int(round(span / self.cfg.step_deg)))
             delay = (span / steps) / self.cfg.move_speed_deg_s if span else 0.0
 
             for i in range(1, steps + 1):
                 intermediate = start + (fraction - start) * (i / steps)
-                self._write_angle(self.angle_for(intermediate))
+                self._write_angles(self.angles_for(intermediate))
                 self._attached = True
                 self._position = intermediate
                 if delay:
@@ -108,65 +137,83 @@ class ServoActuator(Actuator):
             self._detach()
             self._attached = False
 
-    def _write_angle(self, degrees: float) -> None:  # pragma: no cover - interface
+    def _write_angles(self, degrees: list[float]) -> None:
+        """Write one angle per servo, in self.servos order."""
+        for index, value in enumerate(degrees):
+            self._write_angle(index, value)
+
+    def _write_angle(self, index: int, degrees: float) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
     def _detach(self) -> None:
-        """Stop sending pulses. Default is to keep holding."""
+        """Stop sending pulses on every servo. Default is to keep holding."""
 
 
 class MockActuator(ServoActuator):
     """Records everything, moves instantly. For tests and dry runs."""
 
-    def __init__(self, name: str, servo: ServoConfig, actuator: ActuatorConfig, **kwargs):
+    def __init__(self, name: str, servo, actuator: ActuatorConfig, **kwargs):
         super().__init__(name, servo, actuator, sleep=lambda _: None)
+        # angles is the first servo's track, so single-servo assertions read the
+        # same as they always did; per_servo holds one track per servo.
         self.angles: list[float] = []
+        self.per_servo: list[list[float]] = [[] for _ in self.servos]
         self.detaches = 0
 
-    def _write_angle(self, degrees: float) -> None:
-        self.angles.append(round(degrees, 2))
+    def _write_angle(self, index: int, degrees: float) -> None:
+        value = round(degrees, 2)
+        self.per_servo[index].append(value)
+        if index == 0:
+            self.angles.append(value)
 
     def _detach(self) -> None:
         self.detaches += 1
 
 
 class PCA9685Servo(ServoActuator):
-    """One channel of a shared 16-channel I2C PWM board."""
+    """One or more channels of a shared 16-channel I2C PWM board."""
 
-    def __init__(self, name: str, servo: ServoConfig, actuator: ActuatorConfig, kit):
+    def __init__(self, name: str, servo, actuator: ActuatorConfig, kit):
         super().__init__(name, servo, actuator)
-        if servo.channel is None:
-            raise ActuatorError(f"{name}: servo.channel is required for the pca9685 driver")
-        self._servo = kit.servo[servo.channel]
-        self._servo.set_pulse_width_range(actuator.min_pulse_us, actuator.max_pulse_us)
-        self._servo.actuation_range = 180
+        self._channels = []
+        for cfg in self.servos:
+            if cfg.channel is None:
+                raise ActuatorError(f"{name}: servo.channel is required for the pca9685 driver")
+            channel = kit.servo[cfg.channel]
+            channel.set_pulse_width_range(actuator.min_pulse_us, actuator.max_pulse_us)
+            channel.actuation_range = 180
+            self._channels.append(channel)
 
-    def _write_angle(self, degrees: float) -> None:
-        self._servo.angle = degrees
+    def _write_angle(self, index: int, degrees: float) -> None:
+        self._channels[index].angle = degrees
 
     def _detach(self) -> None:
-        self._servo.angle = None   # adafruit's way of saying "stop the pulses"
+        for channel in self._channels:
+            channel.angle = None   # adafruit's way of saying "stop the pulses"
 
 
 class GpioServo(ServoActuator):
     """Servo wired straight to a Pi header pin, driven by pigpio."""
 
-    def __init__(self, name: str, servo: ServoConfig, actuator: ActuatorConfig, pi):
+    def __init__(self, name: str, servo, actuator: ActuatorConfig, pi):
         super().__init__(name, servo, actuator)
-        if servo.gpio is None:
-            raise ActuatorError(f"{name}: servo.gpio is required for the gpio driver")
         self._pi = pi
-        self._gpio = servo.gpio
+        self._gpios = []
+        for cfg in self.servos:
+            if cfg.gpio is None:
+                raise ActuatorError(f"{name}: servo.gpio is required for the gpio driver")
+            self._gpios.append(cfg.gpio)
 
     def _pulse_us(self, degrees: float) -> int:
         lo, hi = self.cfg.min_pulse_us, self.cfg.max_pulse_us
         return int(round(lo + (degrees / 180.0) * (hi - lo)))
 
-    def _write_angle(self, degrees: float) -> None:
-        self._pi.set_servo_pulsewidth(self._gpio, self._pulse_us(degrees))
+    def _write_angle(self, index: int, degrees: float) -> None:
+        self._pi.set_servo_pulsewidth(self._gpios[index], self._pulse_us(degrees))
 
     def _detach(self) -> None:
-        self._pi.set_servo_pulsewidth(self._gpio, 0)
+        for gpio in self._gpios:
+            self._pi.set_servo_pulsewidth(gpio, 0)
 
 
 class ActuatorFactory:
@@ -198,7 +245,7 @@ class ActuatorFactory:
             self._pi = pi
         return self._pi
 
-    def create(self, name: str, servo: ServoConfig) -> Actuator:
+    def create(self, name: str, servo: ServoConfig | list[ServoConfig]) -> Actuator:
         driver = self.cfg.driver
         if driver == "mock":
             actuator = MockActuator(name, servo, self.cfg)

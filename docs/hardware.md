@@ -72,24 +72,37 @@ The PCA9685 rather than direct GPIO because:
 ## Wiring
 
 ```
-                 +-----------------------------+
-   5V 5A PSU --->| V+        PCA9685        SDA|<--- Pi pin 3  (GPIO2 / SDA)
-        GND  --->| GND                      SCL|<--- Pi pin 5  (GPIO3 / SCL)
-                 |                          VCC|<--- Pi pin 1  (3.3 V, logic only)
-                 |                          GND|<--- Pi pin 6  (GND)
-                 | ch0   ch1   ch2             |
-                 +--|-----|-----|--------------+
-                    |     |     |
-                 servo0 servo1 servo2      (bowl1, bowl2, bowl3)
+                 +-------------------------------+
+   5V 5A PSU --->| V+  (6-pin header)        SDA |<--- Pi pin 3  (GPIO2 / SDA)
+        GND  --->| GND (6-pin header)        SCL |<--- Pi pin 5  (GPIO3 / SCL)
+                 |                           VCC |<--- Pi pin 1  (3.3 V, logic only)
+                 |         PCA9685           GND |<--- Pi pin 6  (GND)
+                 | ch0   ch1   ch2   ch3         |
+                 +--|-----|-----|-----|----------+
+                    |     |     |     |
+                    +--+--+     |     |
+                       |        |     |
+                   bowl1 lid  bowl2 bowl3
+                  (two servos, one per hinge)
 
    Pi USB ports:  webcam0, webcam1, webcam2
 ```
+
+**Feed `V+` at the 6-pin header, not the green screw terminal.** On the cheap
+clones (HW-170, HiLetgo, hiBCTR) the terminal block often does not reach the
+servo rail — you measure 5 V at the screws and 0 V at the servo V+ pins, and
+nothing moves. Both boards in our 2-pack failed this way. The `V+` pin on the
+6-pin header is the same net on the far side of the fault, so power it there and
+leave the screw terminal empty. Whatever protection the terminal block offered
+is bypassed too, so check polarity with a meter *before* connecting: red probe
+on your + wire must read **+5 V**, not −5 V.
 
 Rules that matter:
 
 1. **Servos never draw from the Pi.** An MG996R stalls at ~2.5 A. Three of them
    will brown out the Pi instantly, which shows up as random reboots and SD card
-   corruption. `V+` comes from the separate 5 V supply.
+   corruption. `V+` comes from the separate 5 V supply. The Pi's own 5 V pin is
+   fine for bench-testing one unloaded servo and nothing more.
 2. **Common ground.** The PSU ground and the Pi ground must be tied together, or
    the servo signal has no reference and the servos will twitch.
 3. `VCC` on the PCA9685 is the *logic* supply — 3.3 V from the Pi. It is not the
@@ -114,6 +127,32 @@ and a cat's head is pushed out rather than trapped.
 - Aim for 60–90° of travel. `python -m catbowl calibrate --bowl bowl1` walks the
   servo to angles you type so you can find the two end positions, then put them
   in the config as `servo.closed_deg` / `servo.open_deg`.
+
+### Two servos on one lid
+
+A wide or heavy lid is steadier driven from both hinges. List them under
+`servos:` instead of `servo:` and give each its own channel:
+
+```yaml
+  - id: bowl1
+    cat: mochi
+    servos:
+      - {channel: 0, closed_deg: 10,  open_deg: 95}
+      - {channel: 1, closed_deg: 170, open_deg: 85}
+```
+
+The pair is **ganged**: every step of the slew writes both servos before
+sleeping, so the two sides cannot drift apart and rack the lid.
+
+They face opposite ways, so they do not share one pair of angles with a sign
+flip — each carries its own `closed_deg`/`open_deg`. Mirroring about 180° is
+only a starting guess; horn splines land where they land, so calibrate. In
+`calibrate` the angle you type is **servo 0's** angle and the others follow
+proportionally through their own range, and the prompt prints all of them.
+
+Get this wrong and the two servos fight each other: they will buzz, draw stall
+current, and twist the lid. Move to the closed position first, by hand at low
+speed, and confirm both horns sit where you expect before opening.
 - Leave a 5 mm gap at the closed position rather than clamping down hard. The
   point is to stop a cat *eating*, not to seal the bowl.
 - Mount the servo so a cat cannot reach the linkage, and so nothing metal sits

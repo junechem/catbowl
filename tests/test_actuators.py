@@ -75,3 +75,62 @@ def test_factory_parks_every_lid_it_made():
         lid.open()
     factory.shutdown()
     assert all(lid.position == 0.0 for lid in lids)
+
+
+# --------------------------------------------------------------------------- #
+# lids driven from both hinges
+# --------------------------------------------------------------------------- #
+
+def make_pair():
+    """A mirrored pair: servo 0 opens 10 -> 100, servo 1 opens 170 -> 80."""
+    left = ServoConfig(channel=0, closed_deg=10, open_deg=100)
+    right = ServoConfig(channel=1, closed_deg=170, open_deg=80)
+    cfg = ActuatorConfig(driver="mock", move_speed_deg_s=90, step_deg=3)
+    return MockActuator("bowl1", [left, right], cfg)
+
+
+def test_a_ganged_pair_ends_at_each_servos_own_angles():
+    actuator = make_pair()
+    assert actuator.angles_for(0.0) == [10.0, 170.0]
+    assert actuator.angles_for(1.0) == [100.0, 80.0]
+    assert actuator.angles_for(0.5) == [55.0, 125.0]
+
+
+def test_mirrored_servos_travel_in_opposite_directions():
+    actuator = make_pair()
+    actuator.open()
+    left, right = actuator.per_servo
+    assert left == sorted(left), "servo 0 winds up"
+    assert right == sorted(right, reverse=True), "servo 1 winds down"
+
+
+def test_both_sides_are_written_on_every_step():
+    """If one side lagged the other by even a step the lid would rack."""
+    actuator = make_pair()
+    actuator.open()
+    left, right = actuator.per_servo
+    assert len(left) == len(right)
+
+
+def test_step_count_follows_the_servo_with_furthest_to_travel():
+    actuator = make_pair()
+    actuator.open()
+    # servo 1 sweeps 90 degrees, servo 0 only 90 too, but the limit is the max
+    assert len(actuator.per_servo[0]) == 30, "90 degrees at 3 degrees per step"
+    for track in actuator.per_servo:
+        steps = [abs(b - a) for a, b in zip(track, track[1:])]
+        assert max(steps) <= 3.001, "slew limit holds on both sides"
+
+
+def test_detach_releases_the_whole_gang_at_once():
+    actuator = make_pair()
+    actuator.open()
+    assert actuator.detaches == 1, "one detach call, covering every servo"
+
+
+def test_a_single_servo_still_reads_as_one():
+    actuator, servo = make()
+    assert actuator.servos == [servo]
+    assert actuator.servo is servo
+    actuator.open()
+    assert actuator.per_servo == [actuator.angles]

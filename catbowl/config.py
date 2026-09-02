@@ -86,9 +86,18 @@ class BowlConfig:
     id: str
     cat: str
     camera: CameraConfig = field(default_factory=CameraConfig)
-    servo: ServoConfig = field(default_factory=ServoConfig)
+    # A lid may be driven by more than one servo - a heavy or wide lid usually
+    # wants one on each hinge. They are ganged: every servo in this list is
+    # slewed in lockstep. Mirrored servos face opposite ways, so each carries
+    # its own closed_deg/open_deg rather than sharing one pair with a sign flip.
+    servos: list[ServoConfig] = field(default_factory=lambda: [ServoConfig()])
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     enabled: bool = True
+
+    @property
+    def servo(self) -> ServoConfig:
+        """The first servo. Kept so single-servo call sites read unchanged."""
+        return self.servos[0]
 
 
 @dataclass
@@ -213,7 +222,7 @@ def build_config(raw: dict) -> AppConfig:
                 cat=str(entry["cat"]),
                 enabled=bool(entry.get("enabled", True)),
                 camera=_build(CameraConfig, entry.get("camera"), f"{context}.camera"),
-                servo=_build(ServoConfig, entry.get("servo"), f"{context}.servo"),
+                servos=_build_servos(entry, context),
                 policy=_build(PolicyConfig, entry.get("policy"), f"{context}.policy"),
             )
         )
@@ -232,6 +241,28 @@ def build_config(raw: dict) -> AppConfig:
         raise ConfigError(f"unknown top-level key(s): {', '.join(sorted(raw))}")
     _validate(app)
     return app
+
+
+def _build_servos(entry: dict, context: str) -> list[ServoConfig]:
+    """Build a bowl's servo list from either `servo:` or `servos:`.
+
+    `servo:` is one mapping and stays the way single-servo bowls are written.
+    `servos:` is a list of them, for a lid driven from both hinges. Each entry
+    inherits bowl_defaults.servo, so a mirrored pair only has to spell out what
+    actually differs - usually just the channel and the two angles.
+    """
+    if entry.get("servos") is not None:
+        raw_list = entry["servos"]
+        if not isinstance(raw_list, list) or not raw_list:
+            raise ConfigError(f"{context}.servos must be a non-empty list")
+        base = entry.get("servo") or {}
+        servos = []
+        for i, item in enumerate(raw_list):
+            if not isinstance(item, dict):
+                raise ConfigError(f"{context}.servos[{i}] must be a mapping")
+            servos.append(_build(ServoConfig, {**base, **item}, f"{context}.servos[{i}]"))
+        return servos
+    return [_build(ServoConfig, entry.get("servo"), f"{context}.servo")]
 
 
 def _merge(base: dict, override: dict) -> dict:
@@ -261,26 +292,29 @@ def _validate(app: AppConfig) -> None:
             raise ConfigError(f"cat {bowl.cat!r} is assigned to more than one bowl")
         seen_cats.add(bowl.cat)
 
-        if app.actuator.driver == "pca9685":
-            if bowl.servo.channel is None:
-                raise ConfigError(f"bowl {bowl.id!r}: servo.channel is required for the pca9685 driver")
-            if not 0 <= bowl.servo.channel <= 15:
-                raise ConfigError(f"bowl {bowl.id!r}: servo.channel must be 0..15")
-            if bowl.servo.channel in seen_channels:
-                raise ConfigError(
-                    f"bowl {bowl.id!r} reuses servo channel {bowl.servo.channel} "
-                    f"(already used by {seen_channels[bowl.servo.channel]!r})"
-                )
-            seen_channels[bowl.servo.channel] = bowl.id
-        elif app.actuator.driver == "gpio":
-            if bowl.servo.gpio is None:
-                raise ConfigError(f"bowl {bowl.id!r}: servo.gpio is required for the gpio driver")
-            if bowl.servo.gpio in seen_gpios:
-                raise ConfigError(
-                    f"bowl {bowl.id!r} reuses GPIO {bowl.servo.gpio} "
-                    f"(already used by {seen_gpios[bowl.servo.gpio]!r})"
-                )
-            seen_gpios[bowl.servo.gpio] = bowl.id
+        # Every servo on the lid gets checked, not just the first, so a typo in
+        # the second hinge fails at start-up instead of at 3am.
+        for servo in bowl.servos:
+            if app.actuator.driver == "pca9685":
+                if servo.channel is None:
+                    raise ConfigError(f"bowl {bowl.id!r}: servo.channel is required for the pca9685 driver")
+                if not 0 <= servo.channel <= 15:
+                    raise ConfigError(f"bowl {bowl.id!r}: servo.channel must be 0..15")
+                if servo.channel in seen_channels:
+                    raise ConfigError(
+                        f"bowl {bowl.id!r} reuses servo channel {servo.channel} "
+                        f"(already used by {seen_channels[servo.channel]!r})"
+                    )
+                seen_channels[servo.channel] = bowl.id
+            elif app.actuator.driver == "gpio":
+                if servo.gpio is None:
+                    raise ConfigError(f"bowl {bowl.id!r}: servo.gpio is required for the gpio driver")
+                if servo.gpio in seen_gpios:
+                    raise ConfigError(
+                        f"bowl {bowl.id!r} reuses GPIO {servo.gpio} "
+                        f"(already used by {seen_gpios[servo.gpio]!r})"
+                    )
+                seen_gpios[servo.gpio] = bowl.id
 
     # Two bowls may share a camera, but only if each carves out its own ROI.
     by_camera: dict[str, list[BowlConfig]] = {}

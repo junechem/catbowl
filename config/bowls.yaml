@@ -55,20 +55,30 @@ bowl_defaults:
     cooldown_s: 3.0
 
 bowls:
+  # bowl1's lid is driven from both hinges: one servo on each side. They face
+  # opposite ways, so they do NOT share one pair of angles - each has its own
+  # closed_deg/open_deg and the pair is slewed in lockstep. Anything not spelled
+  # out here (detach_when_idle) still comes from bowl_defaults.servo.
+  #
+  # The angles below are a starting guess: servo 1 mirrors servo 0 about 180.
+  # Calibrate before you trust them - `catbowl calibrate --bowl bowl1` - or the
+  # two sides will fight each other and rack the lid.
   - id: bowl1
     cat: mochi
     camera: {device: 0}
-    servo: {channel: 0}
+    servos:
+      - {channel: 0, closed_deg: 10,  open_deg: 95}
+      - {channel: 1, closed_deg: 170, open_deg: 85}
 
   - id: bowl2
     cat: pepper
     camera: {device: 2}
-    servo: {channel: 1}
+    servo: {channel: 2}
 
   - id: bowl3
     cat: biscuit
     camera: {device: 4}
-    servo: {channel: 2}
+    servo: {channel: 3}
 
 # ---------------------------------------------------------------------------
 # Single-camera alternative

@@ -29,13 +29,13 @@ def rig():
     bowl = BowlConfig(
         id="bowl1",
         cat=OWNER,
-        servo=ServoConfig(channel=0),
+        servos=[ServoConfig(channel=0)],
         policy=PolicyConfig(
             open_confirm_s=1.0, close_delay_s=5.0, max_open_s=60.0,
             close_on_intruder=True, intruder_grace_s=2.0, cooldown_s=3.0,
         ),
     )
-    actuator = MockActuator("bowl1", bowl.servo, ActuatorConfig(driver="mock"))
+    actuator = MockActuator("bowl1", bowl.servos, ActuatorConfig(driver="mock"))
     controller = BowlController(bowl, actuator, vote_window=4, votes_required=3,
                                 clock=clock, on_event=events.append)
     return controller, actuator, clock, events
