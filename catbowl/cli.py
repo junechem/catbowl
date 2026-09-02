@@ -43,7 +43,7 @@ def cmd_run(args) -> int:
     if args.collect and not cfg.snapshot_dir:
         cfg.snapshot_dir = "data/collected"
 
-    app = FeederApp(cfg, dry_run=args.no_model)
+    app = FeederApp(cfg, no_model=args.no_model)
 
     def handle_signal(signum, _frame):
         log.info("caught %s", signal.Signals(signum).name)
@@ -496,7 +496,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("run", help="run the feeder")
     p.add_argument("--dry-run", action="store_true", help="simulate the lids, touch no hardware")
-    p.add_argument("--no-model", action="store_true", help="detection only, skip recognition")
+    p.add_argument("--no-model", action="store_true",
+                   help="detection only: any detected cat opens the lid (testing)")
     p.add_argument("--no-status", action="store_true", help="disable the status web page")
     p.add_argument("--collect", action="store_true", help="save crops of every decision for retraining")
     p.set_defaults(func=cmd_run)

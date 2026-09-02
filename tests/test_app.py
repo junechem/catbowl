@@ -135,3 +135,48 @@ def test_a_disabled_bowl_is_skipped(trained):
         assert [w.cfg.id for w in app.workers] == ["bowl1"]
     finally:
         app.stop()
+
+
+# --------------------------------------------------------------------------- #
+# --no-model: identity stubbed out
+# --------------------------------------------------------------------------- #
+
+def test_no_model_treats_any_detection_as_the_bowls_own_cat():
+    """Without a classifier the rig still has to open, or the flag is useless."""
+    from catbowl.app import BowlWorker
+    from catbowl.config import BowlConfig, ServoConfig
+
+    bowl = BowlConfig(id="bowl1", cat="mochi", servos=[ServoConfig(channel=0)])
+    worker = BowlWorker.__new__(BowlWorker)      # no thread, no camera
+    worker.cfg = bowl
+    worker.recognizer = None
+    worker.latest_crop = None
+    worker.detector = MotionDetector(DetectorConfig(warmup_frames=1, min_area_frac=0.001))
+
+    # Learn an empty scene, then put something in it.
+    blank = np.zeros((120, 160, 3), dtype=np.uint8)
+    for _ in range(4):
+        worker.detector.detect(blank)
+    frame = blank.copy()
+    frame[30:90, 40:120] = 255
+
+    present, label, confidence = worker._process(frame)
+    assert present
+    assert label == "mochi", "the detection must be attributed to this bowl's cat"
+    assert confidence == 1.0
+
+
+def test_a_recognizer_free_worker_reports_nothing_when_nothing_moves():
+    from catbowl.app import BowlWorker
+    from catbowl.config import BowlConfig, ServoConfig
+
+    worker = BowlWorker.__new__(BowlWorker)
+    worker.cfg = BowlConfig(id="bowl1", cat="mochi", servos=[ServoConfig(channel=0)])
+    worker.recognizer = None
+    worker.latest_crop = None
+    worker.detector = MotionDetector(DetectorConfig(warmup_frames=1, min_area_frac=0.001))
+
+    blank = np.zeros((120, 160, 3), dtype=np.uint8)
+    for _ in range(4):
+        worker.detector.detect(blank)
+    assert worker._process(blank) == (False, None, 0.0)

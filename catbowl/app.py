@@ -101,7 +101,12 @@ class BowlWorker(threading.Thread):
         crop = detection.crop(image, pad_frac=0.15)
         self.latest_crop = crop
         if self.recognizer is None:
-            return True, None, 0.0
+            # No classifier: identity is stubbed out and anything the detector
+            # finds is treated as this bowl's own cat. Everything downstream -
+            # vote window, confirmation timer, slew, close delay - still runs,
+            # so this exercises the whole rig before a model exists. It will
+            # also open the lid for the wrong cat, a hand, or a passing dog.
+            return True, self.cfg.cat, 1.0
 
         prediction = self.recognizer.predict(crop)
         self.inferences += 1
@@ -138,9 +143,9 @@ class BowlWorker(threading.Thread):
 
 
 class FeederApp:
-    def __init__(self, cfg: AppConfig, dry_run: bool = False):
+    def __init__(self, cfg: AppConfig, no_model: bool = False):
         self.cfg = cfg
-        self.dry_run = dry_run
+        self.no_model = no_model
         self.events = EventLog(cfg.log_dir)
         self.hub = CameraHub()
         self.factory = ActuatorFactory(cfg.actuator)
@@ -150,7 +155,12 @@ class FeederApp:
 
     def build(self) -> None:
         recognizer = None
-        if not self.dry_run:
+        if self.no_model:
+            log.warning(
+                "no-model: every detection counts as the bowl's own cat. "
+                "Any cat, hand or dog will open the lid. Testing only."
+            )
+        else:
             recognizer = Recognizer.from_config(self.cfg.recognition)
             log.info("recognising: %s", ", ".join(recognizer.bundle.labels))
 
@@ -214,7 +224,7 @@ class FeederApp:
         return {
             "version": __version__,
             "uptime_s": round(time.time() - self.started_at),
-            "dry_run": self.dry_run,
+            "no_model": self.no_model,
             "cameras": self.hub.healthy(),
             "bowls": [worker.status() for worker in self.workers],
             "recent_events": [

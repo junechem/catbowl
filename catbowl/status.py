@@ -35,7 +35,7 @@ PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=
 <script>
 async function tick(){
  const s = await (await fetch('/status.json')).json();
- up.textContent = '· up ' + Math.floor(s.uptime_s/60) + 'm' + (s.dry_run ? ' · dry run' : '');
+ up.textContent = '· up ' + Math.floor(s.uptime_s/60) + 'm' + (s.no_model ? ' · NO MODEL: opens for any cat' : '');
  bowls.innerHTML = s.bowls.map(b => `
   <div class=bowl>
    <div class=row><span class=cat>${b.cat}</span><span class="state ${b.state}">${b.state}</span></div>

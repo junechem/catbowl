@@ -5,6 +5,27 @@ The model is not trained from scratch. A frozen ImageNet backbone
 regression on top learns to separate three cats from a few hundred vectors.
 Training takes seconds and can be redone on the Pi itself.
 
+## 0. Test the rig before you have a model
+
+You do not need a trained model, or even a second cat, to check that the whole
+chain works. Detection and identity are separate stages, and you can run the
+first without the second:
+
+```
+python -m catbowl run --no-model
+```
+
+Every detection is treated as that bowl's own cat. Camera, motion detector,
+vote window, confirmation timer, lid slew and close delay all run exactly as
+they will in service - only "which cat is this" is stubbed out.
+
+This is how you tune camera framing, `detector.min_area_frac`, and the policy
+timings before collecting a single photo.
+
+**It will open the lid for any cat, a hand, or a passing dog**, so do not leave
+it running unattended with food in the bowls. Add `--dry-run` to watch the
+decisions with the servos simulated and nothing moving.
+
 ## 1. Import the phone photos you already have
 
 One folder per cat, then:
@@ -21,7 +42,10 @@ and counted; if most of your photos are already tight close-ups, re-run with
 `--keep-uncropped`.
 
 Aim for **60+ crops per cat**, varied across lighting, angle and how curled up
-they are. Photos where two cats are in frame are worse than useless — the
+they are. The cats never need to be photographed at the same time, or even in
+the same week - training reads one folder per cat and never sees them together.
+Two cats' folders is the minimum: a classifier with one class has nothing to
+separate, and `train` will refuse. Photos where two cats are in frame are worse than useless — the
 detector picks one and may label the wrong animal. Set those aside.
 
 ## 2. Capture from the actual rig
