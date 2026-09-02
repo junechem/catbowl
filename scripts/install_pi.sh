@@ -21,6 +21,20 @@ fi
 echo "==> Python environment"
 python3 -m venv .venv
 ./.venv/bin/pip install --upgrade pip
+
+# torch first, and explicitly from PyTorch's CPU index.
+#
+# PyPI's aarch64 torch wheel is now built for NVIDIA's ARM machines (GH200 and
+# friends), so plain `pip install torch` on a Pi drags in ~2 GB of CUDA runtime
+# - a single cuDNN wheel is 445 MB - for a board with no NVIDIA GPU at all.
+# Downloads that size regularly fail on a Pi's network, which is what the
+# "incomplete-download" error is. The +cpu build has no nvidia dependencies.
+#
+# It has to happen before requirements-pi.txt: torch is already satisfied by
+# then, so the `torch>=2.2` line there will not go back to PyPI for it.
+echo "    torch (CPU build - PyPI's aarch64 wheel would pull ~2 GB of CUDA)"
+./.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+
 ./.venv/bin/pip install -r requirements-pi.txt
 
 echo "==> I2C"
