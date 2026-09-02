@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set up catbowl on a fresh Raspberry Pi OS (Bookworm) install.
+# Set up catbowl on a fresh Raspberry Pi OS install (Bookworm or Trixie).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,9 +10,9 @@ sudo apt-get update
 sudo apt-get install -y python3-venv python3-dev i2c-tools v4l-utils
 
 # A tuned BLAS for numpy. Trixie (Raspberry Pi OS 13) dropped ATLAS entirely,
-# Bookworm and older do not have libopenblas-dev under that name, so try the
-# current one first and fall back. Neither is fatal: numpy's own ARM wheels
-# ship a bundled OpenBLAS, so this is a speed-up rather than a dependency.
+# so prefer OpenBLAS and keep the ATLAS line only for older images. Neither is
+# fatal: numpy's own ARM wheels ship a bundled OpenBLAS, so this is a speed-up
+# rather than a dependency.
 if ! sudo apt-get install -y libopenblas-dev 2>/dev/null; then
     sudo apt-get install -y libatlas-base-dev 2>/dev/null || \
         echo "    no system BLAS installed - numpy will use its bundled one"
