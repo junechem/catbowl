@@ -7,7 +7,16 @@ cd "$HERE"
 
 echo "==> System packages"
 sudo apt-get update
-sudo apt-get install -y python3-venv python3-dev libatlas-base-dev i2c-tools v4l-utils
+sudo apt-get install -y python3-venv python3-dev i2c-tools v4l-utils
+
+# A tuned BLAS for numpy. Trixie (Raspberry Pi OS 13) dropped ATLAS entirely,
+# Bookworm and older do not have libopenblas-dev under that name, so try the
+# current one first and fall back. Neither is fatal: numpy's own ARM wheels
+# ship a bundled OpenBLAS, so this is a speed-up rather than a dependency.
+if ! sudo apt-get install -y libopenblas-dev 2>/dev/null; then
+    sudo apt-get install -y libatlas-base-dev 2>/dev/null || \
+        echo "    no system BLAS installed - numpy will use its bundled one"
+fi
 
 echo "==> Python environment"
 python3 -m venv .venv
