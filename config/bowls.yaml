@@ -55,7 +55,13 @@ bowl_defaults:
   servo:
     closed_deg: 10
     open_deg: 95
-    detach_when_idle: true       # cut PWM once the lid settles: no buzzing, no hot servo
+    # Keep the PWM running so the servos hold their commanded angle. Cutting
+    # drive leaves the horn limp, and anything loading it - the lid's weight,
+    # or a mirrored pair pulling against each other - then drags it off
+    # position after the move has finished. Set this true only if the closed
+    # position is self-supporting (lid resting on the rim, not held by torque);
+    # it costs some buzzing, warm servos and a constant draw on the 5 V supply.
+    detach_when_idle: false
   policy:
     open_confirm_s: 0.8          # the right cat must be seen this long before the lid lifts
     close_delay_s: 10            # bowl must look empty this long before the lid drops
