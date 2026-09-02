@@ -1,22 +1,41 @@
-"""Deciding whether *something* is at the bowl, and where in the frame it is.
+"""Deciding whether *a cat* is at the bowl, and where in the frame it is.
 
-Two strategies:
+Four strategies:
 
 ``motion``
     Background subtraction. Cheap (a couple of milliseconds), and with a fixed
-    camera it is a good proxy for "a cat just walked up". This is the default on
-    a Pi 4 because it leaves the whole CPU budget for recognition.
+    camera it is a good proxy for "something just walked up". It has no idea
+    what a cat is: a hand, a dog or a swaying curtain all pass.
 
 ``ssdlite``
     A real COCO object detector, filtered to the ``cat`` class. Much more
     selective - it will not fire on a moving curtain - but costs a few hundred
-    milliseconds per frame on a Pi 4. Worth it if motion gives false triggers.
+    milliseconds per frame on a Pi 4.
+
+``hybrid``
+    Motion as a cheap trigger, ssdlite as the gate. This is the default, and the
+    reason is worth stating plainly: the classifier is a logistic regression
+    over your cats, so its probabilities always sum to one and it *must* return
+    one of them for whatever it is shown. Handed a dog, a hand or a carrier bag
+    it will answer "pepper", sometimes with high confidence - out-of-distribution
+    inputs are exactly where these models are confidently wrong, so the
+    confidence floor does not save you. Something upstream has to establish that
+    the thing at the bowl is a cat at all, and only then ask which cat.
+
+    Running ssdlite on every frame does that but costs a few hundred
+    milliseconds per frame on a Pi 4. Cats arrive and then stay put, so instead
+    ssdlite runs only when motion first appears; the answer is then cached for
+    ``confirm_every_s`` while motion continues, and a "not a cat" answer
+    suppresses it for ``reject_backoff_s`` so a swaying curtain cannot pin the
+    CPU at full rate.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 
@@ -140,9 +159,70 @@ class SsdliteCatDetector(Detector):
         return best
 
 
+class HybridCatDetector(Detector):
+    """Motion triggers; ssdlite decides whether it was a cat.
+
+    The two boxes are not interchangeable. ssdlite's is tight on the animal and
+    makes a better crop for the classifier, so it is preferred whenever it is
+    fresh; between confirmations the motion box stands in.
+    """
+
+    def __init__(
+        self,
+        cfg: DetectorConfig,
+        motion: Detector | None = None,
+        confirm: Detector | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        self.cfg = cfg
+        self._motion = motion if motion is not None else MotionDetector(cfg)
+        # Built lazily: loading ssdlite costs seconds and a few hundred MB, and
+        # a rig running --no-model on a spare Pi should not pay for it twice.
+        self._confirm = confirm
+        self._clock = clock
+        self._confirmed_until = 0.0
+        self._rejected_until = 0.0
+
+    def _detector(self) -> Detector:
+        if self._confirm is None:
+            self._confirm = SsdliteCatDetector(self.cfg)
+        return self._confirm
+
+    def detect(self, image: np.ndarray) -> Detection | None:
+        motion = self._motion.detect(image)
+        if motion is None:
+            # Nothing moving. Do not hold a stale confirmation: the cat has
+            # gone, and the next thing through the frame gets checked afresh.
+            self._confirmed_until = 0.0
+            return None
+
+        now = self._clock()
+        if now < self._confirmed_until:
+            return motion          # still inside a confirmed visit
+        if now < self._rejected_until:
+            return None            # recently judged not-a-cat; stay cheap
+
+        cat = self._detector().detect(image)
+        if cat is None:
+            self._rejected_until = now + self.cfg.reject_backoff_s
+            self._confirmed_until = 0.0
+            return None
+
+        self._confirmed_until = now + self.cfg.confirm_every_s
+        self._rejected_until = 0.0
+        return cat
+
+    def reset(self) -> None:
+        self._motion.reset()
+        self._confirmed_until = 0.0
+        self._rejected_until = 0.0
+
+
 def build_detector(cfg: DetectorConfig) -> Detector:
     if cfg.type == "none":
         return NullDetector()
     if cfg.type == "ssdlite":
         return SsdliteCatDetector(cfg)
+    if cfg.type == "hybrid":
+        return HybridCatDetector(cfg)
     return MotionDetector(cfg)

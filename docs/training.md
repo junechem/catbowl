@@ -48,9 +48,16 @@ they will in service - only "which cat is this" is stubbed out.
 This is how you tune camera framing, `detector.min_area_frac`, and the policy
 timings before collecting a single photo.
 
-**It will open the lid for any cat, a hand, or a passing dog**, so do not leave
-it running unattended with food in the bowls. Add `--dry-run` to watch the
-decisions with the servos simulated and nothing moving.
+With the default `detector.type: hybrid` this opens **for any cat** - the gate
+still checks that what arrived is a cat, it just does not ask which one. That
+makes it a genuine test of the mechanism: if a lid lifts for you waving a hand
+at the camera, the gate is misconfigured, not the model.
+
+Set `detector.type: motion` if you want it to fire on anything at all, which is
+easier to trigger while you are alone at the bench.
+
+Either way, do not leave it running unattended with food in the bowls. Add
+`--dry-run` to watch the decisions with the servos simulated and nothing moving.
 
 ## 1. Import the phone photos you already have
 
@@ -89,13 +96,26 @@ while something is moving. Hold still for the first few seconds — the motion
 detector is learning the empty scene. Fifty on-rig crops per cat are worth more
 than two hundred phone photos.
 
-### The optional `_other` class
+### The `_other` class
+
+Not optional, really. A logistic regression over three cats has probabilities
+that sum to one, so it *must* return one of them for anything it is shown - and
+out-of-distribution inputs are exactly where it is confidently wrong, so
+`min_confidence` alone will not save you.
+
+`detector.type: hybrid` is the first line of defence: it establishes that a cat
+is present before the classifier is asked which cat. `_other` is the second,
+for the cats it does gate through that are not yours.
+
 
 Make a `data/crops/_other/` folder with crops of anything that is *not* one of
 your cats: a hand reaching in, a neighbour's cat at the window, the empty bowl,
 a dog. `_other` is trained as a normal class but can never win a vote, so it
 gives the model an explicit place to put "something is there, but not a cat I
 know" instead of forcing it toward the nearest cat.
+
+The neighbour's cat is the case that matters most, because it is the one the
+detector gate will happily pass through.
 
 ## 3. Train
 

@@ -124,15 +124,24 @@ class RecognitionConfig:
 
 @dataclass
 class DetectorConfig:
-    type: str = "motion"          # motion | ssdlite | none
+    type: str = "hybrid"          # hybrid | motion | ssdlite | none
     min_area_frac: float = 0.02   # ignore blobs smaller than this share of the frame
-    score_threshold: float = 0.5  # ssdlite only
+    score_threshold: float = 0.5  # ssdlite and hybrid only
     pad_frac: float = 0.15        # grow the box before cropping, to catch ears/whiskers
     warmup_frames: int = 30       # motion only: frames spent learning the empty scene
+    # hybrid only: how long a "yes, that is a cat" answer stays good before the
+    # expensive detector is asked again, and how long a "no" suppresses it.
+    confirm_every_s: float = 2.0
+    reject_backoff_s: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.type not in ("motion", "ssdlite", "none"):
-            raise ConfigError(f"detector.type must be motion/ssdlite/none, got {self.type!r}")
+        if self.type not in ("hybrid", "motion", "ssdlite", "none"):
+            raise ConfigError(
+                f"detector.type must be hybrid/motion/ssdlite/none, got {self.type!r}"
+            )
+        for name in ("confirm_every_s", "reject_backoff_s"):
+            if getattr(self, name) < 0:
+                raise ConfigError(f"detector.{name} must not be negative")
 
 
 @dataclass

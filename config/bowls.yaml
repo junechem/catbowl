@@ -16,11 +16,21 @@ recognition:
   votes_required: 4
 
 detector:
-  type: motion                   # motion (cheap) | ssdlite (selective, ~10x slower) | none
+  # hybrid = motion triggers, ssdlite confirms it is actually a cat.
+  # This gate matters: the classifier only knows your cats, so shown a dog or a
+  # hand it still returns one of them, sometimes confidently. Something has to
+  # establish "a cat is here" before "which cat" is a sensible question.
+  #   hybrid  - selective, and cheap because ssdlite runs only on arrival
+  #   motion  - cheapest, but fires on anything that moves
+  #   ssdlite - most selective, runs the detector on every frame (slow on a Pi)
+  #   none    - whole frame, for a camera that only ever sees the bowl
+  type: hybrid
   min_area_frac: 0.02            # ignore blobs smaller than 2% of the frame
   pad_frac: 0.15
   warmup_frames: 30              # frames spent learning the empty scene at startup
-  score_threshold: 0.5           # ssdlite only
+  score_threshold: 0.5           # how sure ssdlite must be that it is a cat
+  confirm_every_s: 2.0           # how long one "yes, a cat" answer stays good
+  reject_backoff_s: 1.0          # how long a "not a cat" suppresses re-checking
 
 actuator:
   driver: pca9685                # pca9685 | gpio | mock
