@@ -7,7 +7,12 @@ cd "$HERE"
 
 echo "==> System packages"
 sudo apt-get update
-sudo apt-get install -y python3-venv python3-dev i2c-tools v4l-utils
+# swig and build-essential are for lgpio: Adafruit's Blinka layer (under
+# adafruit-circuitpython-servokit) depends on it, and PyPI ships it only as a
+# source distribution, so pip compiles a C extension. Without swig the install
+# dies with "command 'swig' failed: No such file or directory".
+sudo apt-get install -y python3-venv python3-dev build-essential swig \
+                        i2c-tools v4l-utils
 
 # A tuned BLAS for numpy. Trixie (Raspberry Pi OS 13) dropped ATLAS entirely,
 # so prefer OpenBLAS and keep the ATLAS line only for older images. Neither is
