@@ -5,6 +5,32 @@ The model is not trained from scratch. A frozen ImageNet backbone
 regression on top learns to separate three cats from a few hundred vectors.
 Training takes seconds and can be redone on the Pi itself.
 
+## Which Python
+
+Every `python -m catbowl ...` below assumes the project's virtual environment is
+active. It holds torch, torchvision and scikit-learn; your system Python almost
+certainly does not, and you will get `ModuleNotFoundError: No module named
+'torch'` if you use it by mistake.
+
+Either activate it for the session:
+
+```
+source .venv/bin/activate         # bash / zsh
+source .venv/bin/activate.fish    # fish
+```
+
+or spell out the interpreter every time, which needs no activation:
+
+```
+.venv/bin/python -m catbowl train
+```
+
+No `.venv` yet? `scripts/install_pi.sh` makes one on the Pi; on a workstation:
+
+```
+python3 -m venv .venv && .venv/bin/pip install -r requirements-train.txt
+```
+
 ## 0. Test the rig before you have a model
 
 You do not need a trained model, or even a second cat, to check that the whole

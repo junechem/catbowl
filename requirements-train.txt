@@ -1,0 +1,18 @@
+# Everything needed to build a dataset and train the classifier.
+#
+#   python3 -m venv .venv-train
+#   .venv-train/bin/pip install -r requirements-train.txt
+#
+# No hardware packages: this env never touches a servo or an I2C bus, so it
+# installs the same on a workstation as on the Pi.
+
+-r requirements.txt
+
+# `train` splits the data and prints the confusion matrix and threshold sweep;
+# both come from scikit-learn, already pinned in requirements.txt.
+
+# Used by `import`/`capture` to write crops and by `eval` to read them back.
+# opencv-python-headless (in requirements.txt) covers this.
+
+# Running the test suite against your own data changes
+pytest>=7.0
