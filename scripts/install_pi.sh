@@ -7,12 +7,7 @@ cd "$HERE"
 
 echo "==> System packages"
 sudo apt-get update
-# swig and build-essential are for lgpio: Adafruit's Blinka layer (under
-# adafruit-circuitpython-servokit) depends on it, and PyPI ships it only as a
-# source distribution, so pip compiles a C extension. Without swig the install
-# dies with "command 'swig' failed: No such file or directory".
-sudo apt-get install -y python3-venv python3-dev build-essential swig \
-                        i2c-tools v4l-utils
+sudo apt-get install -y python3-venv python3-dev i2c-tools v4l-utils
 
 # A tuned BLAS for numpy. Trixie (Raspberry Pi OS 13) dropped ATLAS entirely,
 # so prefer OpenBLAS and keep the ATLAS line only for older images. Neither is
@@ -39,6 +34,22 @@ python3 -m venv .venv
 # then, so the `torch>=2.2` line there will not go back to PyPI for it.
 echo "    torch (CPU build - PyPI's aarch64 wheel would pull ~2 GB of CUDA)"
 ./.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+
+# lgpio, from Adafruit's prebuilt wheels rather than PyPI.
+#
+# adafruit-circuitpython-servokit depends on Blinka, which depends on lgpio.
+# PyPI ships lgpio as a source distribution only, and building it needs swig
+# *and* the liblgpio C library - which Debian does not package at all, so the
+# build gets as far as the linker and fails on "cannot find -llgpio". Adafruit
+# publishes statically linked wheels (cp313/cp314/cp315, aarch64) that need no
+# system library and no toolchain.
+#
+# --only-binary guarantees the wheel is used rather than pip quietly falling
+# back to compiling the PyPI sdist again.
+echo "    lgpio (prebuilt wheel - the PyPI sdist needs a C library Debian lacks)"
+./.venv/bin/pip install --only-binary=:all: \
+    --find-links https://github.com/adafruit/lgpio-python-wheels/raw/main/wheels/ \
+    lgpio || echo "    lgpio wheel unavailable for this Python/arch - see the URL above"
 
 ./.venv/bin/pip install -r requirements-pi.txt
 
