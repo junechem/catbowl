@@ -234,6 +234,14 @@ class FeederApp:
             ],
         }
 
+    def set_manual(self, bowl_id: str, mode: str | None) -> None:
+        """Pin one bowl's lid by hand. Raises KeyError for an unknown bowl."""
+        worker = next((w for w in self.workers if w.cfg.id == bowl_id), None)
+        if worker is None:
+            raise KeyError(bowl_id)
+        log.info("%s: manual override -> %s", bowl_id, mode or "auto")
+        worker.controller.set_manual(mode)
+
     def run_forever(self) -> None:
         self.build()
         self.start()

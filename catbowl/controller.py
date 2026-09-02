@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import threading
 import time
 from typing import Callable
 
@@ -60,6 +61,10 @@ class BowlController:
         self._opened_at = 0.0
         self._cooldown_until = 0.0
         self._denied_at: dict[str, float] = {}
+        self._manual: str | None = None
+        # observe() runs on the bowl's worker thread; set_manual() is called
+        # from the status server's. Both mutate the same state machine.
+        self._lock = threading.RLock()
         self.stats = {"opens": 0, "denials": 0, "seconds_open": 0.0}
 
     # -- public API --------------------------------------------------------- #
@@ -70,6 +75,10 @@ class BowlController:
 
     def observe(self, present: bool, label: str | None = None, confidence: float = 0.0) -> None:
         """Feed one frame's worth of evidence into the machine."""
+        with self._lock:
+            self._observe(present, label, confidence)
+
+    def _observe(self, present: bool, label: str | None, confidence: float) -> None:
         now = self.clock()
         if present:
             self.last_seen = now
@@ -86,12 +95,63 @@ class BowlController:
 
         self.last_decision = self.votes.decision()
 
+        # A manual hold outranks the state machine. Evidence above is still
+        # collected so the status page keeps showing what the camera sees, but
+        # no transition fires: the lid stays where a human put it.
+        if self._manual is not None:
+            return
+
         if self.state is BowlState.COOLDOWN:
             self._tick_cooldown(now)
         elif self.state is BowlState.CLOSED:
             self._tick_closed(now, present)
         else:
             self._tick_open(now, present)
+
+    def set_manual(self, mode: str | None) -> None:
+        """Pin the lid open or closed by hand, or hand control back.
+
+        ``mode`` is "open", "closed", or None to resume automatic control.
+        Resuming drops into the normal cooldown rather than straight to CLOSED,
+        so a cat still standing at the bowl cannot re-open it instantly.
+        """
+        if mode not in (None, "open", "closed"):
+            raise ValueError(f"manual mode must be open/closed/None, got {mode!r}")
+        with self._lock:
+            self._set_manual(mode)
+
+    def _set_manual(self, mode: str | None) -> None:
+        now = self.clock()
+        self._manual = mode
+        self._intruder_since = None
+
+        if mode == "open":
+            if self.state is not BowlState.OPEN:
+                self._opened_at = now
+                self.stats["opens"] += 1
+            self.state = BowlState.OPEN
+            self.actuator.open()
+        elif mode == "closed":
+            if self.state is BowlState.OPEN:
+                duration = round(now - self._opened_at, 1)
+                self.stats["seconds_open"] = round(self.stats["seconds_open"] + duration, 1)
+            self.state = BowlState.CLOSED
+            self.actuator.close()
+        else:
+            if self.state is BowlState.OPEN:
+                duration = round(now - self._opened_at, 1)
+                self.stats["seconds_open"] = round(self.stats["seconds_open"] + duration, 1)
+                self.actuator.close()
+            self.state = BowlState.COOLDOWN
+            self._cooldown_until = now + self.cfg.policy.cooldown_s
+            self.votes.clear()
+            self._owner_since = None
+
+        self._emit("manual", cat=self.cfg.cat, detail={"lid": mode or "auto"})
+
+    @property
+    def manual(self) -> str | None:
+        return self._manual
 
     def force_close(self, reason: str = "shutdown") -> None:
         if self.state is BowlState.OPEN:
@@ -105,6 +165,7 @@ class BowlController:
             "bowl": self.cfg.id,
             "cat": self.cfg.cat,
             "state": self.state.value,
+            "manual": self._manual,
             "lid": round(self.actuator.position, 2),
             "seen": self.last_decision or "-",
             "confidence": round(self.last_confidence, 3),

@@ -194,3 +194,52 @@ def test_a_broken_event_sink_cannot_stop_the_lid(rig):
     controller.on_event = explode
     feed(controller, clock, OWNER, frames=8, dt=0.2)
     assert actuator.is_open
+
+
+# --- manual override ------------------------------------------------------- #
+
+def test_a_manual_open_holds_against_an_empty_bowl(rig):
+    controller, actuator, clock, _ = rig
+    controller.set_manual("open")
+    assert actuator.position == 1.0
+
+    for _ in range(50):
+        clock.advance(1.0)
+        controller.observe(present=False)
+    assert actuator.position == 1.0, "the state machine must not override a hand"
+    assert controller.manual == "open"
+
+
+def test_a_manual_close_holds_against_the_right_cat(rig):
+    controller, actuator, clock, _ = rig
+    controller.set_manual("closed")
+    feed(controller, clock, OWNER, frames=50)
+    assert actuator.position == 0.0, "held shut, even for the owner"
+
+
+def test_resuming_auto_goes_through_cooldown(rig):
+    controller, actuator, clock, _ = rig
+    controller.set_manual("open")
+    controller.set_manual(None)
+
+    assert controller.manual is None
+    assert controller.state is BowlState.COOLDOWN
+    assert actuator.position == 0.0
+
+    feed(controller, clock, OWNER, frames=10)
+    assert actuator.position == 0.0, "a cat standing there cannot reopen instantly"
+
+
+def test_the_lid_returns_to_automatic_control_after_the_cooldown(rig):
+    controller, actuator, clock, _ = rig
+    controller.set_manual("open")
+    controller.set_manual(None)
+    clock.advance(4.0)                      # cooldown_s is 3.0
+    feed(controller, clock, OWNER, frames=10)
+    assert actuator.position == 1.0, "the state machine has the lid back"
+
+
+def test_an_unknown_manual_mode_is_rejected(rig):
+    controller, _, _, _ = rig
+    with pytest.raises(ValueError):
+        controller.set_manual("ajar")

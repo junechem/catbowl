@@ -1,8 +1,13 @@
 """A tiny status page, so you can check the rig from your phone.
 
-Deliberately stdlib-only and read-only: http://<pi>:8080/ shows each bowl's
-state, and /snapshot/<bowl>.jpg shows exactly what that camera is looking at,
-which is how you find out the lens has been nudged sideways.
+Deliberately stdlib-only: http://<pi>:8080/ shows each bowl's state, and
+/snapshot/<bowl>.jpg shows exactly what that camera is looking at, which is how
+you find out the lens has been nudged sideways.
+
+It also accepts POST /control to pin a lid open or closed by hand. There is no
+authentication of any kind, so anyone who can reach the port can work the lids.
+That is a deliberate trade for a box on a home LAN; do not port-forward it, and
+set status_port: null if the network is shared.
 """
 
 from __future__ import annotations
@@ -30,6 +35,12 @@ PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=
  table{width:100%;border-collapse:collapse;font-size:.82rem}
  td{padding:.25rem .5rem .25rem 0;border-bottom:1px solid #2c313a;color:#9aa0a6}
  .err{color:#e08c8c}
+ .btns{display:flex;gap:.5rem;margin-top:.8rem}
+ button{flex:1;font:inherit;font-size:.85rem;padding:.45rem .5rem;border-radius:6px;
+   border:1px solid #3a4150;background:#252a33;color:#e8e6e3;cursor:pointer}
+ button:hover{background:#2f3540}
+ button.on{background:#1e4620;border-color:#2f6b34;color:#8fd694}
+ .held{font-size:.78rem;color:#e0c07a;margin-top:.5rem}
 </style>
 <h1>catbowl <span id=up></span></h1><div id=bowls></div><h1>recent</h1><table id=events></table>
 <script>
@@ -42,10 +53,21 @@ async function tick(){
    <dl><dt>bowl<dd>${b.bowl}<dt>lid<dd>${Math.round(b.lid*100)}%<dt>seeing<dd>${b.seen} (${b.confidence})
    <dt>opens today<dd>${b.opens} · ${Math.round(b.seconds_open)}s<dt>denials<dd>${b.denials}
    ${b.error ? '<dt>error<dd class=err>'+b.error : ''}</dl>
+   <div class=btns>
+    <button class="${b.manual==='open'?'on':''}" onclick="hold('${b.bowl}','open')">open</button>
+    <button class="${b.manual==='closed'?'on':''}" onclick="hold('${b.bowl}','closed')">close</button>
+    <button onclick="hold('${b.bowl}',null)" ${b.manual?'':'disabled'}>auto</button>
+   </div>
+   ${b.manual ? '<div class=held>held '+b.manual+' by hand - press auto to resume</div>' : ''}
    <img src="/snapshot/${b.bowl}.jpg?t=${Date.now()}" alt="">
   </div>`).join('');
  events.innerHTML = s.recent_events.map(e =>
    `<tr><td>${e.time}<td>${e.bowl}<td>${e.kind}<td>${e.cat||''}<td>${JSON.stringify(e.detail)}</tr>`).join('');
+}
+async function hold(bowl, lid){
+ await fetch('/control', {method:'POST', headers:{'Content-Type':'application/json'},
+                          body: JSON.stringify({bowl, lid})});
+ tick();
 }
 tick(); setInterval(tick, 2000);
 </script>
@@ -81,6 +103,29 @@ def _handler_for(app):
                 log.exception("status request failed: %s", self.path)
                 self._send(b"error", "text/plain", 500)
 
+        def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            if self.path.split("?", 1)[0] != "/control":
+                self._send(b"not found", "text/plain", 404)
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                bowl = body.get("bowl")
+                lid = body.get("lid")          # "open" | "closed" | null for auto
+                app.set_manual(bowl, lid)
+            except KeyError:
+                self._send(b"no such bowl", "text/plain", 404)
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                self._send(str(exc).encode(), "text/plain", 400)
+            except BrokenPipeError:  # pragma: no cover - browser navigated away
+                pass
+            except Exception:
+                log.exception("control request failed")
+                self._send(b"error", "text/plain", 500)
+            else:
+                self._send(json.dumps(app.status(), default=str).encode(),
+                           "application/json")
+
         def _snapshot(self, bowl_id: str) -> None:
             import cv2
 
@@ -101,9 +146,36 @@ def _handler_for(app):
     return Handler
 
 
+def _lan_address() -> str:
+    """The address this machine is actually reachable at from the network.
+
+    Logging 0.0.0.0 is useless: you cannot type it into a phone. Connecting a
+    UDP socket to an off-machine address sends nothing, but it makes the kernel
+    pick the interface it would route through, and its local address is the one
+    worth printing.
+    """
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("192.0.2.1", 9))     # TEST-NET-1: reserved, never routed
+        return sock.getsockname()[0]
+    except OSError:
+        return socket.gethostname()        # no network; the hostname may resolve
+    finally:
+        sock.close()
+
+
 def start_status_server(app, port: int) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer(("0.0.0.0", port), _handler_for(app))
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, name="status", daemon=True).start()
-    log.info("status page on http://0.0.0.0:%d/", port)
+
+    import socket
+
+    urls = [f"http://{_lan_address()}:{port}/"]
+    host = socket.gethostname()
+    if host and not host.startswith("localhost"):
+        urls.append(f"http://{host}.local:{port}/")
+    log.info("status page on %s", "  or  ".join(urls))
     return server
