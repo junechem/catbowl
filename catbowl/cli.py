@@ -35,6 +35,15 @@ def cmd_run(args) -> int:
     from .config import load_config
 
     cfg = load_config(args.config)
+    if args.bowl:
+        wanted = set(args.bowl)
+        unknown = wanted - {b.id for b in cfg.bowls}
+        if unknown:
+            log.error("no such bowl: %s", ", ".join(sorted(unknown)))
+            return 2
+        cfg.bowls = [b for b in cfg.bowls if b.id in wanted]
+        log.info("running %d of the configured bowls: %s",
+                 len(cfg.bowls), ", ".join(b.id for b in cfg.bowls))
     if args.dry_run:
         cfg.actuator.driver = "mock"
         log.info("dry run: lids are simulated, no PWM will be sent")
@@ -500,6 +509,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="detection only: any detected cat opens the lid (testing)")
     p.add_argument("--no-status", action="store_true", help="disable the status web page")
     p.add_argument("--collect", action="store_true", help="save crops of every decision for retraining")
+    p.add_argument("--bowl", action="append", metavar="ID",
+                   help="run only this bowl (repeatable); default is every bowl in the config")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("import", help="import phone photos into the crops directory")
