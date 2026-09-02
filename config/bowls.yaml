@@ -29,8 +29,14 @@ detector:
   pad_frac: 0.15
   warmup_frames: 30              # frames spent learning the empty scene at startup
   score_threshold: 0.5           # how sure ssdlite must be that it is a cat
-  confirm_every_s: 2.0           # how long one "yes, a cat" answer stays good
+  confirm_every_s: 2.0           # how often ssdlite is re-asked during a visit
   reject_backoff_s: 1.0          # how long a "not a cat" suppresses re-checking
+  # A cat eating has its face in the bowl and does not look like a cat to a
+  # COCO detector for minutes at a time. These two keep a visit alive through
+  # that: ssdlite must refuse for confirm_grace_s straight, and motion must be
+  # absent for visit_gap_s, before the cat counts as gone.
+  confirm_grace_s: 25.0
+  visit_gap_s: 2.0
 
 actuator:
   driver: pca9685                # pca9685 | gpio | mock
@@ -64,7 +70,7 @@ bowl_defaults:
     detach_when_idle: false
   policy:
     open_confirm_s: 0.8          # the right cat must be seen this long before the lid lifts
-    close_delay_s: 10            # bowl must look empty this long before the lid drops
+    close_delay_s: 25            # bowl must look empty this long before the lid drops
     max_open_s: 900              # nobody eats for 15 minutes; something is stuck
     close_on_intruder: true
     intruder_grace_s: 2.0

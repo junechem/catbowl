@@ -133,13 +133,22 @@ class DetectorConfig:
     # expensive detector is asked again, and how long a "no" suppresses it.
     confirm_every_s: float = 2.0
     reject_backoff_s: float = 1.0
+    # Once a visit has started, how long ssdlite may keep failing before the
+    # visit is declared over. An eating cat is head-down in a bowl and stops
+    # looking like a cat to a COCO detector for long stretches; without this
+    # the gate revokes it mid-meal and the lid shuts on the animal.
+    confirm_grace_s: float = 25.0
+    # How long motion must be absent before a visit ends. Covers the moment a
+    # settled cat stops moving enough for background subtraction to notice.
+    visit_gap_s: float = 2.0
 
     def __post_init__(self) -> None:
         if self.type not in ("hybrid", "motion", "ssdlite", "none"):
             raise ConfigError(
                 f"detector.type must be hybrid/motion/ssdlite/none, got {self.type!r}"
             )
-        for name in ("confirm_every_s", "reject_backoff_s"):
+        for name in ("confirm_every_s", "reject_backoff_s",
+                     "confirm_grace_s", "visit_gap_s"):
             if getattr(self, name) < 0:
                 raise ConfigError(f"detector.{name} must not be negative")
 

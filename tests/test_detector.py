@@ -110,14 +110,67 @@ def test_the_cat_leaving_drops_the_confirmation():
     clock = FakeClock()
     motion = Scripted(MOVED)
     confirm = Scripted(IS_CAT)
-    gate = build(motion, confirm, clock=clock, confirm_every_s=60.0)
+    gate = build(motion, confirm, clock=clock, confirm_every_s=60.0, visit_gap_s=2.0)
 
     assert gate.detect(FRAME) is IS_CAT
     motion.result = None              # cat wanders off
     assert gate.detect(FRAME) is None
+    clock.advance(2.0)                # long enough to count as gone
+    assert gate.detect(FRAME) is None
     motion.result = MOVED             # something else arrives, well inside 60 s
     gate.detect(FRAME)
     assert confirm.calls == 2, "the next visitor gets checked on its own merits"
+
+
+def test_a_brief_still_moment_does_not_end_the_visit():
+    """A settled cat stops registering as motion long before it has left."""
+    clock = FakeClock()
+    motion = Scripted(MOVED)
+    confirm = Scripted(IS_CAT)
+    gate = build(motion, confirm, clock=clock, confirm_every_s=60.0, visit_gap_s=2.0)
+
+    assert gate.detect(FRAME) is IS_CAT
+    motion.result = None
+    clock.advance(1.0)                # still, but not for long enough
+    assert gate.detect(FRAME) is None
+    motion.result = MOVED
+    gate.detect(FRAME)
+    assert confirm.calls == 1, "the visit survived the pause; no re-check needed"
+
+
+def test_a_head_down_cat_keeps_the_lid_open():
+    """The failure this gate was rebuilt for.
+
+    ssdlite stops recognising a cat the moment it puts its face in the bowl.
+    Treating that as 'the cat left' shut the lid on the animal mid-meal.
+    """
+    clock = FakeClock()
+    motion = Scripted(MOVED)
+    confirm = Scripted(IS_CAT)
+    gate = build(motion, confirm, clock=clock,
+                 confirm_every_s=2.0, confirm_grace_s=25.0)
+
+    assert gate.detect(FRAME) is IS_CAT
+    confirm.result = None             # head goes down; ssdlite sees no cat
+
+    for _ in range(60):               # 24 s of eating
+        clock.advance(0.4)
+        assert gate.detect(FRAME) is MOVED, "the cat is still there"
+
+    assert confirm.calls > 1, "it kept checking, in case the cat was swapped"
+
+
+def test_a_sustained_refusal_finally_ends_the_visit():
+    clock = FakeClock()
+    motion = Scripted(MOVED)
+    confirm = Scripted(IS_CAT)
+    gate = build(motion, confirm, clock=clock,
+                 confirm_every_s=2.0, confirm_grace_s=10.0)
+
+    assert gate.detect(FRAME) is IS_CAT
+    confirm.result = None
+    clock.advance(11.0)
+    assert gate.detect(FRAME) is None, "grace ran out with no cat ever seen again"
 
 
 def test_reset_clears_the_gate_state():

@@ -23,11 +23,19 @@ Four strategies:
     the thing at the bowl is a cat at all, and only then ask which cat.
 
     Running ssdlite on every frame does that but costs a few hundred
-    milliseconds per frame on a Pi 4. Cats arrive and then stay put, so instead
-    ssdlite runs only when motion first appears; the answer is then cached for
-    ``confirm_every_s`` while motion continues, and a "not a cat" answer
-    suppresses it for ``reject_backoff_s`` so a swaying curtain cannot pin the
-    CPU at full rate.
+    milliseconds per frame on a Pi 4, so it runs only when motion first
+    appears. A "not a cat" answer suppresses it for ``reject_backoff_s`` so a
+    swaying curtain cannot pin the CPU at full rate.
+
+    Once it says yes, that starts a *visit*, and a visit ends only when it is
+    actively disproven - not when a timer runs out. This matters more than it
+    sounds: a cat with its head down in a bowl does not look like a cat to a
+    COCO detector, and it will keep not looking like one for as long as it
+    keeps eating. A gate that demanded periodic re-proof would revoke the
+    animal mid-meal and drop the lid on it. So ssdlite is re-asked every
+    ``confirm_every_s`` to catch a swap, but only an unbroken
+    ``confirm_grace_s`` of refusals ends the visit, and motion must be gone for
+    ``visit_gap_s`` before the visit is considered over.
 """
 
 from __future__ import annotations
@@ -180,7 +188,10 @@ class HybridCatDetector(Detector):
         # a rig running --no-model on a spare Pi should not pay for it twice.
         self._confirm = confirm
         self._clock = clock
-        self._confirmed_until = 0.0
+        self._visiting = False
+        self._last_motion_at = 0.0
+        self._last_yes_at = 0.0
+        self._next_check_at = 0.0
         self._rejected_until = 0.0
 
     def _detector(self) -> Detector:
@@ -189,32 +200,54 @@ class HybridCatDetector(Detector):
         return self._confirm
 
     def detect(self, image: np.ndarray) -> Detection | None:
-        motion = self._motion.detect(image)
-        if motion is None:
-            # Nothing moving. Do not hold a stale confirmation: the cat has
-            # gone, and the next thing through the frame gets checked afresh.
-            self._confirmed_until = 0.0
-            return None
-
         now = self._clock()
-        if now < self._confirmed_until:
-            return motion          # still inside a confirmed visit
-        if now < self._rejected_until:
-            return None            # recently judged not-a-cat; stay cheap
+        motion = self._motion.detect(image)
 
-        cat = self._detector().detect(image)
-        if cat is None:
-            self._rejected_until = now + self.cfg.reject_backoff_s
-            self._confirmed_until = 0.0
+        if motion is None:
+            # Do not end the visit on the first still frame. A cat that has
+            # settled down to eat moves very little, and background
+            # subtraction stops reporting it long before it has left.
+            if self._visiting and now - self._last_motion_at >= self.cfg.visit_gap_s:
+                self._visiting = False
             return None
 
-        self._confirmed_until = now + self.cfg.confirm_every_s
-        self._rejected_until = 0.0
-        return cat
+        self._last_motion_at = now
+
+        if not self._visiting:
+            if now < self._rejected_until:
+                return None            # recently judged not-a-cat; stay cheap
+            cat = self._detector().detect(image)
+            if cat is None:
+                self._rejected_until = now + self.cfg.reject_backoff_s
+                return None
+            self._visiting = True
+            self._last_yes_at = now
+            self._rejected_until = 0.0
+            self._next_check_at = now + self.cfg.confirm_every_s
+            return cat
+
+        # In a visit. Re-ask periodically so a cat swapped for a dog is caught,
+        # but treat a refusal as weak evidence: it is the normal answer for a
+        # head-down cat. Only a sustained run of them ends the visit.
+        if now < self._next_check_at:
+            return motion
+        self._next_check_at = now + self.cfg.confirm_every_s
+        cat = self._detector().detect(image)
+        if cat is not None:
+            self._last_yes_at = now
+            return cat
+        if now - self._last_yes_at >= self.cfg.confirm_grace_s:
+            self._visiting = False
+            self._rejected_until = now + self.cfg.reject_backoff_s
+            return None
+        return motion
 
     def reset(self) -> None:
         self._motion.reset()
-        self._confirmed_until = 0.0
+        self._visiting = False
+        self._last_motion_at = 0.0
+        self._last_yes_at = 0.0
+        self._next_check_at = 0.0
         self._rejected_until = 0.0
 
 
