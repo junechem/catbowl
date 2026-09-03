@@ -170,8 +170,13 @@ shipped — every detection banks a crop in `data/collected/unsorted/`, one ever
 frame, but nothing is labelled for you: before a classifier exists the rig has no
 honest way to know, and folders named by a guess are worse than no folders.
 
-After a week, move them into `data/crops/<cat>/` yourself, delete the frames that
-caught a tail or an empty bowl, and retrain. This is where most of the eventual
+After a week, file them: open `http://<pi>:8080/sort` on a phone and give each
+photo a bucket (`capture.labels`, `J`/`K`/`F`/`M` as shipped, where M is
+more-than-one-cat). They land in `data/collected/<label>/`, and photos worth
+nothing go to `data/collected/discard/` - a folder, not a delete, because an
+empty-bowl frame is exactly what a later model needs to learn to refuse.
+
+Then move the buckets you want to train on into `data/crops/<cat>/` and retrain. This is where most of the eventual
 accuracy comes from.
 
 `--collect` is the older, narrower version of the same idea: it saves only the

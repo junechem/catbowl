@@ -174,12 +174,29 @@ class CaptureConfig:
     interval_s: float = 2.0         # seconds between saved images, per bowl
     max_images: int = 5000          # stop once the folder holds this many; a Pi's SD card is small
     save_frame: bool = False        # also save the whole frame beside the crop
+    # The buckets offered by the sorting page at /sort. Each becomes a folder
+    # under `dir`, so they have to be usable as directory names. "M" is the
+    # more-than-one-cat pile: not useful for training a single-cat classifier,
+    # but kept, because a frame with two cats in it is exactly what a future
+    # model will need to learn to refuse.
+    labels: list[str] = field(default_factory=lambda: ["J", "K", "F", "M"])
 
     def __post_init__(self) -> None:
         if self.interval_s < 0:
             raise ConfigError("capture.interval_s must not be negative")
         if self.max_images < 0:
             raise ConfigError("capture.max_images must not be negative")
+        if not self.labels:
+            raise ConfigError("capture.labels must not be empty")
+        self.labels = [str(label) for label in self.labels]
+        for label in self.labels:
+            if not label or not all(c.isalnum() or c in "_-" for c in label):
+                raise ConfigError(
+                    f"capture.labels entries must be letters, digits, - or _ "
+                    f"(they become folder names), got {label!r}"
+                )
+        if len(set(self.labels)) != len(self.labels):
+            raise ConfigError("capture.labels contains a duplicate")
 
 
 @dataclass

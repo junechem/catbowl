@@ -67,8 +67,14 @@ fires the bowl will not open again until it has looked empty for
 next portion rather than eating straight through the limit.
 
 Every detection also banks a photo in `data/collected/unsorted/` (`capture:` in
-the config). They are deliberately unlabelled — sort them into `data/crops/<cat>/`
-by hand and retrain.
+the config). Sort them from the Pi itself at `http://<pi>:8080/sort` — one photo
+at a time, a button per label (`J`, `K`, `F`, `M` for more-than-one-cat), plus
+skip, junk and one step of undo; the keyboard shortcuts are the label letters,
+`x` for junk, `u` for undo and space to skip. Labelling is a file rename, the
+page never polls, and photos are served straight off the disk, so sorting from
+the sofa costs the feeder almost nothing.
+
+Nothing is ever deleted: "junk" is `data/collected/discard/`, not a bin.
 
 ## Commands
 

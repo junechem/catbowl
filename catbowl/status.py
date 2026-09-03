@@ -4,6 +4,12 @@ Deliberately stdlib-only: http://<pi>:8080/ shows each bowl's state, and
 /snapshot/<bowl>.jpg shows exactly what that camera is looking at, which is how
 you find out the lens has been nudged sideways.
 
+/sort is the other half: the photos the rig banks, one at a time, with a button
+per label, so a week of captures can be filed from a phone on the sofa. It is
+kept deliberately cheap - the page never polls, filenames arrive in batches, an
+image is served straight off the disk without being decoded, and a label is a
+rename. The feeder's own threads should not notice it is there.
+
 It also accepts POST /control to pin a lid open or closed by hand. There is no
 authentication of any kind, so anyone who can reach the port can work the lids.
 That is a deliberate trade for a box on a home LAN; do not port-forward it, and
@@ -17,6 +23,8 @@ import logging
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from .sorting import SortError
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +51,9 @@ PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=
  button.on{background:#1e4620;border-color:#2f6b34;color:#8fd694}
  .held{font-size:.78rem;color:#e0c07a;margin-top:.5rem}
 </style>
-<h1>catbowl <span id=up></span></h1><div id=bowls></div><h1>recent</h1><table id=events></table>
+<h1>catbowl <span id=up></span></h1><div id=bowls></div>
+<p><a href="/sort">sort captured photos</a></p>
+<h1>recent</h1><table id=events></table>
 <script>
 async function tick(){
  const s = await (await fetch('/status.json')).json();
@@ -77,17 +87,128 @@ tick(); setInterval(tick, 2000);
 """
 
 
+SORT_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>catbowl · sort</title>
+<style>
+ body{font:15px/1.5 system-ui,sans-serif;margin:0;padding:1rem;background:#14161a;color:#e8e6e3;
+   -webkit-user-select:none;user-select:none}
+ h1{font-size:1.1rem;margin:0 0 .8rem;color:#9aa0a6;font-weight:600}
+ h1 a{color:#9aa0a6}
+ #shot{width:100%;max-width:420px;aspect-ratio:1;object-fit:contain;background:#000;
+   border-radius:10px;display:block;margin:0 auto}
+ #name{font-size:.75rem;color:#6b7280;text-align:center;margin:.4rem 0 .8rem;
+   font-family:ui-monospace,monospace}
+ .keys{display:flex;flex-wrap:wrap;gap:.5rem;max-width:420px;margin:0 auto}
+ .keys button{flex:1 1 4rem;font:inherit;font-size:1.2rem;font-weight:600;padding:.9rem .5rem;
+   border-radius:8px;border:1px solid #3a4150;background:#252a33;color:#e8e6e3;cursor:pointer}
+ .keys button:active{background:#1e4620;border-color:#2f6b34}
+ .keys button.minor{font-size:.9rem;font-weight:400;color:#9aa0a6}
+ #tally{max-width:420px;margin:1rem auto 0;font-size:.82rem;color:#9aa0a6;
+   display:flex;flex-wrap:wrap;gap:.8rem;justify-content:center}
+ #done{text-align:center;color:#9aa0a6;padding:3rem 1rem}
+</style>
+<h1><a href="/">&larr; catbowl</a> · sort</h1>
+<div id=app></div>
+<div id=tally></div>
+<script>
+let queue = [], labels = [], counts = {}, busy = false;
+
+async function fill(force){
+ const response = await fetch('/sort/queue.json' + (force ? '?refresh=1' : ''));
+ if (!response.ok){                       // capture is off, or the folder vanished
+  app.textContent = await response.text();
+  return;
+ }
+ const r = await response.json();
+ labels = r.labels; counts = r.counts;
+ // Keep anything already on screen; add only names we have not seen.
+ const seen = new Set(queue);
+ for (const n of r.pending) if (!seen.has(n)) queue.push(n);
+ draw();
+}
+
+function draw(){
+ const totals = labels.concat(['discard']).map(l => l + ' ' + (counts[l]||0));
+ tally.textContent = totals.join('  ·  ') + '   left: ' + (counts.unsorted||0);
+ if (!queue.length){
+  app.innerHTML = '<div id=done>Nothing left to sort.<br><br>' +
+    '<button class=minor onclick="fill(true)">check again</button></div>';
+  return;
+ }
+ const buttons = labels.map(l =>
+   `<button onclick="pick('${l}')">${l}</button>`).join('') +
+   `<button class=minor onclick="pick('discard')">junk</button>` +
+   `<button class=minor onclick="skip()">skip</button>` +
+   `<button class=minor onclick="undo()">undo</button>`;
+ app.innerHTML = `<img id=shot src="/sort/photo/${queue[0]}" alt="">
+   <div id=name>${queue[0]}</div><div class=keys>${buttons}</div>`;
+ // Fetch the next two now, while a human is deciding about this one. They are
+ // served with a long cache lifetime, so showing them costs no request.
+ for (const n of queue.slice(1, 3)) new Image().src = '/sort/photo/' + n;
+ if (queue.length < 4) fill(false);
+}
+
+async function pick(label){
+ if (busy || !queue.length) return;
+ busy = true;
+ const name = queue.shift();
+ try {
+  const r = await fetch('/sort/label', {method:'POST', headers:{'Content-Type':'application/json'},
+                                        body: JSON.stringify({name, label})});
+  const body = await r.json();
+  if (body.counts) counts = body.counts;
+ } catch (e) { queue.unshift(name); }
+ busy = false;
+ draw();
+}
+
+function skip(){ if (queue.length){ queue.push(queue.shift()); draw(); } }
+
+async function undo(){
+ if (busy) return;
+ busy = true;
+ const r = await (await fetch('/sort/undo', {method:'POST'})).json();
+ if (r.name) queue.unshift(r.name);
+ if (r.counts) counts = r.counts;
+ busy = false;
+ draw();
+}
+
+addEventListener('keydown', e => {
+ if (e.key === 'u') return undo();
+ if (e.key === 'x') return pick('discard');
+ if (e.key === ' ') { e.preventDefault(); return skip(); }
+ const hit = labels.find(l => l.toLowerCase() === e.key.toLowerCase());
+ if (hit) pick(hit);
+});
+
+fill(true);
+</script>
+"""
+
+
 def _handler_for(app):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
-        def _send(self, body: bytes, content_type: str, status: int = 200) -> None:
+        def _send(self, body: bytes, content_type: str, status: int = 200,
+                  cache: str = "no-store") -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             self.end_headers()
             self.wfile.write(body)
+
+        def _json(self, payload: dict, status: int = 200) -> None:
+            self._send(json.dumps(payload, default=str).encode(), "application/json", status)
+
+        def _sorter(self):
+            """The sorter, or None once a 404 has been sent explaining why."""
+            if app.sorter is None:
+                self._send(b"photo capture is off (capture.dir is not set)", "text/plain", 404)
+                return None
+            return app.sorter
 
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
             path = self.path.split("?", 1)[0]
@@ -98,6 +219,12 @@ def _handler_for(app):
                     self._send(json.dumps(app.status(), default=str).encode(), "application/json")
                 elif path.startswith("/snapshot/") and path.endswith(".jpg"):
                     self._snapshot(path[len("/snapshot/"):-len(".jpg")])
+                elif path == "/sort":
+                    self._send(SORT_PAGE.encode(), "text/html; charset=utf-8")
+                elif path == "/sort/queue.json":
+                    self._queue("refresh=1" in (self.path.split("?", 1) + [""])[1])
+                elif path.startswith("/sort/photo/"):
+                    self._photo(path[len("/sort/photo/"):])
                 else:
                     self._send(b"not found", "text/plain", 404)
             except (BrokenPipeError, ConnectionResetError):  # pragma: no cover - client left
@@ -107,7 +234,14 @@ def _handler_for(app):
                 self._send(b"error", "text/plain", 500)
 
         def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-            if self.path.split("?", 1)[0] != "/control":
+            path = self.path.split("?", 1)[0]
+            if path == "/sort/label":
+                self._label()
+                return
+            if path == "/sort/undo":
+                self._undo()
+                return
+            if path != "/control":
                 self._send(b"not found", "text/plain", 404)
                 return
             try:
@@ -128,6 +262,66 @@ def _handler_for(app):
             else:
                 self._send(json.dumps(app.status(), default=str).encode(),
                            "application/json")
+
+        def _queue(self, refresh: bool) -> None:
+            sorter = self._sorter()
+            if sorter is None:
+                return
+            self._json({"labels": sorter.labels,
+                        "pending": sorter.pending(refresh=refresh),
+                        "counts": sorter.counts()})
+
+        def _photo(self, name: str) -> None:
+            """Serve one captured photo straight off the disk.
+
+            No decode, no re-encode: these are the bytes cv2 wrote. The long
+            cache lifetime is safe because a capture filename is a timestamp and
+            is never reused, and it is what makes the page's preloading free.
+            """
+            sorter = self._sorter()
+            if sorter is None:
+                return
+            try:
+                path = sorter.path_for(name)
+            except SortError as exc:
+                self._send(str(exc).encode(), "text/plain", 400)
+                return
+            try:
+                body = path.read_bytes()
+            except OSError:
+                self._send(b"no such photo", "text/plain", 404)
+                return
+            self._send(body, "image/jpeg", cache="public, max-age=31536000, immutable")
+
+        def _read_json(self) -> dict:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length) or b"{}")
+            if not isinstance(body, dict):
+                raise ValueError("expected a JSON object")
+            return body
+
+        def _label(self) -> None:
+            sorter = self._sorter()
+            if sorter is None:
+                return
+            try:
+                body = self._read_json()
+                filed = sorter.assign(str(body.get("name", "")), str(body.get("label", "")))
+            except (SortError, ValueError, TypeError) as exc:
+                self._send(str(exc).encode(), "text/plain", 400)
+            except (BrokenPipeError, ConnectionResetError):  # pragma: no cover - client left
+                pass
+            except Exception:
+                log.exception("sort request failed")
+                self._send(b"error", "text/plain", 500)
+            else:
+                self._json({"filed": filed, "counts": sorter.counts()})
+
+        def _undo(self) -> None:
+            sorter = self._sorter()
+            if sorter is None:
+                return
+            self._json({"name": sorter.undo(), "counts": sorter.counts()})
 
         def _snapshot(self, bowl_id: str) -> None:
             import cv2

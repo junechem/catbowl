@@ -18,6 +18,7 @@ from .controller import BowlController
 from .detector import Detector, build_detector
 from .events import Event, EventLog
 from .recognizer import Recognizer
+from .sorting import Sorter
 
 log = logging.getLogger(__name__)
 
@@ -197,6 +198,11 @@ class FeederApp:
         self.hub = CameraHub()
         self.factory = ActuatorFactory(cfg.actuator)
         self.workers: list[BowlWorker] = []
+        # Only exists when photos are being captured; /sort has nothing to show
+        # otherwise.
+        self.sorter = (
+            Sorter(cfg.capture.dir, cfg.capture.labels) if cfg.capture.dir else None
+        )
         self.started_at = time.time()
         self._status_server = None
 

@@ -62,6 +62,10 @@ capture:
   interval_s: 2.0            # seconds between saved images, per bowl
   max_images: 5000           # stop before the SD card does
   save_frame: false          # true also keeps the whole frame beside each crop
+  # Buckets offered by the sorting page at http://<pi>:8080/sort. Each is a
+  # folder under `dir`. M is "more than one cat": no use for training a
+  # single-cat classifier, but kept rather than thrown away.
+  labels: [J, K, F, M]
 
 # Applied to every bowl, then overridden per bowl below.
 bowl_defaults:
