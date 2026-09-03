@@ -1,0 +1,10 @@
+# Start catbowl when a camera is plugged in.
+#
+# systemd only knows about udev devices that carry the "systemd" tag, and
+# video4linux nodes are not tagged by default - hence TAG+= before the
+# SYSTEMD_WANTS. The service's own ConditionPathExistsGlob handles the other
+# direction: with no camera present it refuses to start at all.
+#
+# metadata nodes (a UVC webcam exposes video0 for pictures and video1 for
+# metadata) match too, but starting an already-running service is a no-op.
+SUBSYSTEM=="video4linux", KERNEL=="video[0-9]*", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}+="catbowl.service"

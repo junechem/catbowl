@@ -13,7 +13,7 @@ import numpy as np
 from . import UNKNOWN, __version__
 from .actuators import ActuatorFactory
 from .cameras import CameraHub, CameraView
-from .config import AppConfig, BowlConfig
+from .config import AppConfig, BowlConfig, CaptureConfig
 from .controller import BowlController
 from .detector import Detector, build_detector
 from .events import Event, EventLog
@@ -38,6 +38,7 @@ class BowlWorker(threading.Thread):
         controller: BowlController,
         loop_fps: float,
         snapshot_dir: Path | None = None,
+        capture: CaptureConfig | None = None,
     ):
         super().__init__(name=f"bowl-{cfg.id}", daemon=True)
         self.cfg = cfg
@@ -47,6 +48,13 @@ class BowlWorker(threading.Thread):
         self.controller = controller
         self.period = 1.0 / max(loop_fps, 0.1)
         self.snapshot_dir = snapshot_dir
+        self.capture = capture or CaptureConfig()
+        self._capture_dir = Path(self.capture.dir) / "unsorted" if self.capture.dir else None
+        self._last_capture = 0.0
+        # Seeded from what is already on disk so max_images caps the folder
+        # rather than the run: otherwise a service that restarts nightly fills
+        # the SD card a few thousand images at a time.
+        self._captured = self._count_captures()
         self._stop = threading.Event()
         self._last_snapshot = 0.0
         self._last_state = controller.state
@@ -100,6 +108,7 @@ class BowlWorker(threading.Thread):
 
         crop = detection.crop(image, pad_frac=0.15)
         self.latest_crop = crop
+        self._maybe_capture(image, crop)
         if self.recognizer is None:
             # No classifier: identity is stubbed out and anything the detector
             # finds is treated as this bowl's own cat. Everything downstream -
@@ -111,6 +120,43 @@ class BowlWorker(threading.Thread):
         prediction = self.recognizer.predict(crop)
         self.inferences += 1
         return True, prediction.label, prediction.confidence
+
+    def _count_captures(self) -> int:
+        if self._capture_dir is None or not self._capture_dir.is_dir():
+            return 0
+        return sum(1 for _ in self._capture_dir.glob("*.jpg"))
+
+    def _maybe_capture(self, frame: np.ndarray, crop: np.ndarray) -> None:
+        """Bank a photo of whatever is at the bowl, for a later training run.
+
+        Runs on every detection rather than on state changes, because the point
+        is a varied dataset: a cat mid-turn or head-down is exactly the pose the
+        classifier gets wrong, and those frames never coincide with a lid moving.
+        The images go in one unsorted folder - which cat this is, is the question
+        the dataset exists to answer, so the rig must not pretend to know it.
+        """
+        if self._capture_dir is None:
+            return
+        now = time.monotonic()
+        if now - self._last_capture < self.capture.interval_s:
+            return
+        if self.capture.max_images and self._captured >= self.capture.max_images:
+            return
+        self._last_capture = now
+        try:
+            import cv2
+
+            self._capture_dir.mkdir(parents=True, exist_ok=True)
+            stamp = f"{datetime.now():%Y%m%d-%H%M%S-%f}"[:-3]
+            cv2.imwrite(str(self._capture_dir / f"{self.cfg.id}-{stamp}.jpg"), crop)
+            if self.capture.save_frame:
+                cv2.imwrite(str(self._capture_dir / f"{self.cfg.id}-{stamp}-frame.jpg"), frame)
+            self._captured += 1
+            if self.capture.max_images and self._captured == self.capture.max_images:
+                log.info("%s: capture folder has reached max_images (%d); stopping",
+                         self.cfg.id, self.capture.max_images)
+        except Exception:  # pragma: no cover - collecting data is never critical
+            log.exception("%s: could not save a capture", self.cfg.id)
 
     def _maybe_snapshot(self) -> None:
         """Save the crop behind each state change - free extra training data."""
@@ -137,6 +183,7 @@ class BowlWorker(threading.Thread):
         return {
             **self.controller.status(),
             "frames": self.frames,
+            "captured": self._captured,
             "inferences": self.inferences,
             "error": self.last_error,
         }
@@ -187,6 +234,7 @@ class FeederApp:
                     controller=controller,
                     loop_fps=self.cfg.loop_fps,
                     snapshot_dir=snapshot_dir,
+                    capture=self.cfg.capture,
                 )
             )
         if not self.workers:

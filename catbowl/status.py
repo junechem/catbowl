@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -52,6 +53,7 @@ async function tick(){
    <div class=row><span class=cat>${b.cat}</span><span class="state ${b.state}">${b.state}</span></div>
    <dl><dt>bowl<dd>${b.bowl}<dt>lid<dd>${Math.round(b.lid*100)}%<dt>seeing<dd>${b.seen} (${b.confidence})
    <dt>opens today<dd>${b.opens} · ${Math.round(b.seconds_open)}s<dt>denials<dd>${b.denials}
+   ${b.captured ? '<dt>photos kept<dd>'+b.captured : ''}
    ${b.error ? '<dt>error<dd class=err>'+b.error : ''}</dl>
    <div class=btns>
     <button class="${b.manual==='open'?'on':''}" onclick="hold('${b.bowl}','open')">open</button>
@@ -59,6 +61,7 @@ async function tick(){
     <button onclick="hold('${b.bowl}',null)" ${b.manual?'':'disabled'}>auto</button>
    </div>
    ${b.manual ? '<div class=held>held '+b.manual+' by hand - press auto to resume</div>' : ''}
+   ${b.waiting_for_rearm && !b.manual ? '<div class=held>time limit reached - waiting for the cat to step away</div>' : ''}
    <img src="/snapshot/${b.bowl}.jpg?t=${Date.now()}" alt="">
   </div>`).join('');
  events.innerHTML = s.recent_events.map(e =>
@@ -97,7 +100,7 @@ def _handler_for(app):
                     self._snapshot(path[len("/snapshot/"):-len(".jpg")])
                 else:
                     self._send(b"not found", "text/plain", 404)
-            except BrokenPipeError:  # pragma: no cover - browser navigated away
+            except (BrokenPipeError, ConnectionResetError):  # pragma: no cover - client left
                 pass
             except Exception:
                 log.exception("status request failed: %s", self.path)
@@ -117,7 +120,7 @@ def _handler_for(app):
                 self._send(b"no such bowl", "text/plain", 404)
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 self._send(str(exc).encode(), "text/plain", 400)
-            except BrokenPipeError:  # pragma: no cover - browser navigated away
+            except (BrokenPipeError, ConnectionResetError):  # pragma: no cover - client left
                 pass
             except Exception:
                 log.exception("control request failed")
@@ -166,8 +169,26 @@ def _lan_address() -> str:
         sock.close()
 
 
+class _QuietServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer that does not shout when a browser hangs up.
+
+    The page polls every two seconds over keep-alive connections, so a phone
+    locking its screen, a tab closing, or a reload mid-request leaves a socket
+    the client has already reset. socketserver's default handler prints the
+    whole traceback to stderr for each one, which buries the feeder's own log in
+    ConnectionResetError. Anything else still gets reported in full.
+    """
+
+    def handle_error(self, request, client_address) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError)):
+            log.debug("status client %s hung up: %s", client_address[0], type(exc).__name__)
+            return
+        log.exception("status request from %s failed", client_address[0])
+
+
 def start_status_server(app, port: int) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer(("0.0.0.0", port), _handler_for(app))
+    server = _QuietServer(("0.0.0.0", port), _handler_for(app))
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, name="status", daemon=True).start()
 

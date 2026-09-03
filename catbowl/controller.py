@@ -61,6 +61,10 @@ class BowlController:
         self._opened_at = 0.0
         self._cooldown_until = 0.0
         self._denied_at: dict[str, float] = {}
+        # Set when a sitting ended on the clock rather than because the cat
+        # left. It blocks the next open until the bowl has been empty for
+        # policy.rearm_absent_s, so the cat has to step away and come back.
+        self._needs_arrival = False
         self._manual: str | None = None
         # observe() runs on the bowl's worker thread; set_manual() is called
         # from the status server's. Both mutate the same state machine.
@@ -95,6 +99,15 @@ class BowlController:
 
         self.last_decision = self.votes.decision()
 
+        if (
+            self._needs_arrival
+            and not present
+            and now - self.last_seen >= self.cfg.policy.rearm_absent_s
+        ):
+            self._needs_arrival = False
+            log.info("%s: bowl clear, ready to open for %s again", self.cfg.id, self.cat)
+            self._emit("rearmed", cat=self.cat)
+
         # A manual hold outranks the state machine. Evidence above is still
         # collected so the status page keeps showing what the camera sees, but
         # no transition fires: the lid stays where a human put it.
@@ -124,6 +137,8 @@ class BowlController:
         now = self.clock()
         self._manual = mode
         self._intruder_since = None
+        # A human moving the lid outranks a pending time-limit lockout too.
+        self._needs_arrival = False
 
         if mode == "open":
             if self.state is not BowlState.OPEN:
@@ -166,6 +181,7 @@ class BowlController:
             "cat": self.cfg.cat,
             "state": self.state.value,
             "manual": self._manual,
+            "waiting_for_rearm": self._needs_arrival,
             "lid": round(self.actuator.position, 2),
             "seen": self.last_decision or "-",
             "confidence": round(self.last_confidence, 3),
@@ -184,6 +200,11 @@ class BowlController:
             self._owner_since = None
 
     def _tick_closed(self, now: float, present: bool) -> None:
+        # Still waiting for the cat to step back from the last sitting. Evidence
+        # keeps flowing so the status page stays honest, but nothing opens.
+        if self._needs_arrival:
+            return
+
         winner = self.last_decision
         if winner == self.cat and present and self._owner_since is not None:
             if now - self._owner_since >= self.cfg.policy.open_confirm_s:
@@ -214,6 +235,10 @@ class BowlController:
             return
 
         if self.cfg.policy.max_open_s and now - self._opened_at >= self.cfg.policy.max_open_s:
+            # The cat is very likely still at the bowl, so this close has to
+            # latch: otherwise the cooldown expires under its nose and it eats
+            # straight through the limit.
+            self._needs_arrival = True
             self._close(now, "max_open_s")
 
     # -- transitions -------------------------------------------------------- #

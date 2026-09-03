@@ -59,8 +59,7 @@ Next steps:
   2. .venv/bin/python -m catbowl calibrate --bowl bowl1   (repeat per bowl)
   3. Build a dataset and train - see docs/training.md
   4. .venv/bin/python -m catbowl run --dry-run            (watch, do not move lids)
-  5. Install the service:
-       sudo cp systemd/catbowl.service /etc/systemd/system/
-       sudo systemctl daemon-reload && sudo systemctl enable --now catbowl
+  5. Install the service (starts at boot, and when a camera is plugged in):
+       ./scripts/install_service.sh
        journalctl -u catbowl -f
 NEXT

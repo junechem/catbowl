@@ -163,10 +163,20 @@ reports how many crops would open the right lid, the wrong lid, or no lid, and
 lists the specific files it got wrong — look at those images, they usually
 explain themselves (motion blur, half a cat, the tail end of a cat).
 
-Then run the feeder with `--collect`. Every state change saves the crop that
-caused it into `data/collected/<label>/`. After a week, sort those into
-`data/crops/` (fixing any wrong labels as you go) and retrain. This is where
-most of the eventual accuracy comes from.
+Then just let the feeder run. With `capture.dir` set — it is `data/collected` as
+shipped — every detection banks a crop in `data/collected/unsorted/`, one every
+`capture.interval_s`, up to `capture.max_images`. Filenames are
+`<bowl>-<date>-<time>.jpg`, so the bowl tells you which cat is *likely* in the
+frame, but nothing is labelled for you: before a classifier exists the rig has no
+honest way to know, and folders named by a guess are worse than no folders.
+
+After a week, move them into `data/crops/<cat>/` yourself, delete the frames that
+caught a tail or an empty bowl, and retrain. This is where most of the eventual
+accuracy comes from.
+
+`--collect` is the older, narrower version of the same idea: it saves only the
+crop behind each state change, filed under whatever the classifier decided. It is
+useful once a model exists and you want to audit its mistakes.
 
 ## If two of your cats look nearly identical
 

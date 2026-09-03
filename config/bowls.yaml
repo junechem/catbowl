@@ -52,6 +52,17 @@ status_port: 8080                # http://<pi>:8080/ - set to null to disable
 log_dir: logs
 snapshot_dir: null               # set a path (or use `run --collect`) to bank retraining data
 
+# Bank a photo every time the detector finds something at a bowl, so a training
+# set builds itself while the rig runs. They land unsorted in <dir>/unsorted:
+# the rig cannot know which cat it is looking at until a classifier exists, and
+# labelling them by guess would poison the dataset. Sort them into per-cat
+# folders by hand (data/crops/mochi/, ...) and run `catbowl train`.
+capture:
+  dir: data/collected        # null, or `run --no-capture`, turns this off
+  interval_s: 2.0            # seconds between saved images, per bowl
+  max_images: 5000           # stop before the SD card does
+  save_frame: false          # true also keeps the whole frame beside each crop
+
 # Applied to every bowl, then overridden per bowl below.
 bowl_defaults:
   camera:
@@ -71,7 +82,13 @@ bowl_defaults:
   policy:
     open_confirm_s: 0.8          # the right cat must be seen this long before the lid lifts
     close_delay_s: 25            # bowl must look empty this long before the lid drops
-    max_open_s: 900              # nobody eats for 15 minutes; something is stuck
+    # A sitting is capped at 30 seconds, then the lid drops whether or not the
+    # cat is still there. This is the portioning rule: it slows the cats down,
+    # which is the point. After a capped sitting the bowl has to look empty for
+    # rearm_absent_s before it will open again, so the cat has to step away and
+    # be detected afresh rather than eating straight through the limit.
+    max_open_s: 30
+    rearm_absent_s: 5
     close_on_intruder: true
     intruder_grace_s: 2.0
     cooldown_s: 3.0

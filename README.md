@@ -53,16 +53,28 @@ Then:
    Import your phone photos, then capture more from the mounted cameras.
 5. **Watch before you move anything** — `python -m catbowl run --dry-run` logs
    every decision without touching a servo. Read [docs/safety.md](docs/safety.md).
-6. **Install the service** — `systemd/catbowl.service`.
+6. **Install the service** — `./scripts/install_service.sh`. It starts catbowl
+   at boot and, through a udev rule, whenever a camera is plugged in; with no
+   camera present it stays down instead of restart-looping.
 
 While it runs, `http://<pi>:8080/` shows each bowl's state, what its camera is
-looking at right now, and the last twenty events.
+looking at right now, the last twenty events, and a button per bowl to hold the
+lid open or shut by hand.
+
+A sitting is capped at `policy.max_open_s` (30 seconds as shipped). When the cap
+fires the bowl will not open again until it has looked empty for
+`policy.rearm_absent_s`, so a cat has to step back and be detected afresh for the
+next portion rather than eating straight through the limit.
+
+Every detection also banks a photo in `data/collected/unsorted/` (`capture:` in
+the config). They are deliberately unlabelled — sort them into `data/crops/<cat>/`
+by hand and retrain.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `catbowl run` | Run the feeder. `--dry-run` simulates lids, `--collect` banks retraining data |
+| `catbowl run` | Run the feeder. `--dry-run` simulates lids, `--no-capture` stops it banking photos |
 | `catbowl doctor` | Check packages, config, model and hardware, and say what is missing |
 | `catbowl cameras` | Probe every `/dev/video*` and report which ones deliver frames |
 | `catbowl calibrate --bowl bowl1` | Walk a servo to angles you type, to find the end positions |

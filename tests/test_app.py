@@ -151,6 +151,7 @@ def test_no_model_treats_any_detection_as_the_bowls_own_cat():
     worker.cfg = bowl
     worker.recognizer = None
     worker.latest_crop = None
+    worker._capture_dir = None                   # no dataset collection here
     worker.detector = MotionDetector(DetectorConfig(warmup_frames=1, min_area_frac=0.001))
 
     # Learn an empty scene, then put something in it.
@@ -174,9 +175,39 @@ def test_a_recognizer_free_worker_reports_nothing_when_nothing_moves():
     worker.cfg = BowlConfig(id="bowl1", cat="mochi", servos=[ServoConfig(channel=0)])
     worker.recognizer = None
     worker.latest_crop = None
+    worker._capture_dir = None                   # no dataset collection here
     worker.detector = MotionDetector(DetectorConfig(warmup_frames=1, min_area_frac=0.001))
 
     blank = np.zeros((120, 160, 3), dtype=np.uint8)
     for _ in range(4):
         worker.detector.detect(blank)
     assert worker._process(blank) == (False, None, 0.0)
+
+
+def test_detections_are_banked_for_later_labelling(trained):
+    """The dataset builds itself while the rig runs.
+
+    Images land unsorted: at this point the rig has no trustworthy idea which
+    cat it is looking at, and folders named by a guess would be worse than none.
+    """
+    workdir, model_path = trained
+    collected = workdir / "collected"
+    app = make_app(workdir, model_path,
+                   capture={"dir": str(collected), "interval_s": 0.2})
+    run_for(app, 5.0)
+
+    images = list((collected / "unsorted").glob("*.jpg"))
+    assert images, "nothing was captured"
+    assert {p.name.split("-")[0] for p in images} == {w.cfg.id for w in app.workers}
+    assert sum(w.status()["captured"] for w in app.workers) == len(images)
+
+
+def test_capture_stops_at_max_images(trained):
+    workdir, model_path = trained
+    collected = workdir / "capped"
+    app = make_app(workdir, model_path,
+                   capture={"dir": str(collected), "interval_s": 0.05, "max_images": 2})
+    run_for(app, 4.0)
+
+    images = list((collected / "unsorted").glob("*.jpg"))
+    assert 0 < len(images) <= 2 * len(app.workers)

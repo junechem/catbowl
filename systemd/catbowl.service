@@ -1,26 +1,38 @@
 [Unit]
 Description=catbowl per-cat feeder
-After=network-online.target pigpiod.service
+After=network-online.target
 Wants=network-online.target
+# No camera, no feeder. The condition is re-checked on every start attempt, so
+# an unplugged rig sits quietly instead of restart-looping; the udev rule in
+# 99-catbowl.rules starts the service the moment a camera appears.
+ConditionPathExistsGlob=/dev/video*
+# Restart forever. The default burst limit would give up after a few crashes,
+# which for a feeder means the lids stay shut until someone notices.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/catbowl
-ExecStart=/home/pi/catbowl/.venv/bin/python -m catbowl run --config config/bowls.yaml
+User=__USER__
+WorkingDirectory=__DIR__
+# A camera plugged in at boot may not have finished enumerating when udev fires.
+ExecStartPre=/bin/sleep 2
+ExecStart=__DIR__/.venv/bin/python -m catbowl run --config config/bowls.yaml
 Restart=always
 RestartSec=5
 # If the process dies, systemd restarts it and the first thing FeederApp does is
 # drive every lid closed - so a crash leaves the bowls shut, not open.
 StandardOutput=journal
 StandardError=journal
+# Cameras, I2C and GPIO are group-owned; __USER__ needs to be in these for the
+# unit to reach the hardware. install_service.sh adds them.
+SupplementaryGroups=video i2c gpio
 
 # Modest hardening; the service still needs /dev/video*, /dev/i2c-* and GPIO.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/home/pi/catbowl
+ReadWritePaths=__DIR__
 
 [Install]
 WantedBy=multi-user.target

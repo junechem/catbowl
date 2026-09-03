@@ -51,6 +51,13 @@ def cmd_run(args) -> int:
         cfg.status_port = None
     if args.collect and not cfg.snapshot_dir:
         cfg.snapshot_dir = "data/collected"
+    if args.capture_dir:
+        cfg.capture.dir = args.capture_dir
+    if args.no_capture:
+        cfg.capture.dir = None
+    if cfg.capture.dir:
+        log.info("capturing detections to %s/unsorted (sort them by cat, then train)",
+                 cfg.capture.dir)
 
     app = FeederApp(cfg, no_model=args.no_model)
 
@@ -509,6 +516,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="detection only: any detected cat opens the lid (testing)")
     p.add_argument("--no-status", action="store_true", help="disable the status web page")
     p.add_argument("--collect", action="store_true", help="save crops of every decision for retraining")
+    p.add_argument("--capture-dir", metavar="DIR",
+                   help="bank a photo of every detection here (overrides capture.dir)")
+    p.add_argument("--no-capture", action="store_true",
+                   help="do not bank photos of detections, whatever the config says")
     p.add_argument("--bowl", action="append", metavar="ID",
                    help="run only this bowl (repeatable); default is every bowl in the config")
     p.set_defaults(func=cmd_run)

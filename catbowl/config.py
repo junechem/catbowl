@@ -69,12 +69,19 @@ class PolicyConfig:
     open_confirm_s: float = 0.8    # how long the right cat must be seen before the lid lifts
     close_delay_s: float = 10.0    # how long the bowl must be empty before the lid drops
     max_open_s: float = 900.0      # hard ceiling on a single sitting
+    # After max_open_s ends a sitting, the bowl must look empty for this long
+    # before it will open again. Without it a cat that never steps back simply
+    # gets the lid returned a cooldown later, which defeats the ceiling: the
+    # point of the limit is to break the meal into portions, and that only
+    # works if the cat has to walk away and come back for the next one.
+    rearm_absent_s: float = 5.0
     close_on_intruder: bool = True
     intruder_grace_s: float = 2.0  # a wrong cat must linger this long before we close
     cooldown_s: float = 3.0        # dead time after closing, stops the lid oscillating
 
     def __post_init__(self) -> None:
-        for name in ("open_confirm_s", "close_delay_s", "max_open_s", "intruder_grace_s", "cooldown_s"):
+        for name in ("open_confirm_s", "close_delay_s", "max_open_s",
+                     "rearm_absent_s", "intruder_grace_s", "cooldown_s"):
             if getattr(self, name) < 0:
                 raise ConfigError(f"policy.{name} must not be negative")
         if self.max_open_s and self.max_open_s < self.close_delay_s:
@@ -154,6 +161,28 @@ class DetectorConfig:
 
 
 @dataclass
+class CaptureConfig:
+    """Bank photographs of whatever the detector finds, for later training.
+
+    These land unsorted in one folder: the rig has no reliable idea which cat it
+    is looking at until a classifier exists, and guessing would poison the very
+    dataset being collected. Sort them into per-cat folders by hand, then point
+    `catbowl train` at that.
+    """
+
+    dir: str | None = None          # None disables capture entirely
+    interval_s: float = 2.0         # seconds between saved images, per bowl
+    max_images: int = 5000          # stop once the folder holds this many; a Pi's SD card is small
+    save_frame: bool = False        # also save the whole frame beside the crop
+
+    def __post_init__(self) -> None:
+        if self.interval_s < 0:
+            raise ConfigError("capture.interval_s must not be negative")
+        if self.max_images < 0:
+            raise ConfigError("capture.max_images must not be negative")
+
+
+@dataclass
 class ActuatorConfig:
     driver: str = "pca9685"       # pca9685 | gpio | mock
     i2c_bus: int = 1              # /dev/i2c-1, the Pi's header bus
@@ -183,6 +212,7 @@ class AppConfig:
     log_dir: str = "logs"
     status_port: int | None = 8080
     snapshot_dir: str | None = None   # if set, save the crop behind every decision
+    capture: CaptureConfig = field(default_factory=CaptureConfig)
 
     def bowl(self, bowl_id: str) -> BowlConfig:
         for bowl in self.bowls:
@@ -255,6 +285,7 @@ def build_config(raw: dict) -> AppConfig:
         log_dir=str(raw.pop("log_dir", "logs")),
         status_port=raw.pop("status_port", 8080),
         snapshot_dir=raw.pop("snapshot_dir", None),
+        capture=_build(CaptureConfig, raw.pop("capture", None), "capture"),
     )
     if raw:
         raise ConfigError(f"unknown top-level key(s): {', '.join(sorted(raw))}")

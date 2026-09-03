@@ -139,3 +139,32 @@ def test_a_second_bowl_cannot_steal_a_ganged_channel():
 def test_an_empty_servos_list_is_rejected():
     with pytest.raises(ConfigError, match="non-empty list"):
         build_config({"bowls": [{"id": "a", "cat": "mochi", "servos": []}]})
+
+
+def test_capture_defaults_to_off():
+    app = cfg()
+    assert app.capture.dir is None
+
+
+def test_capture_block_is_read():
+    app = cfg(capture={"dir": "data/collected", "interval_s": 0.5, "save_frame": True})
+    assert app.capture.dir == "data/collected"
+    assert app.capture.interval_s == 0.5
+    assert app.capture.save_frame is True
+
+
+def test_a_negative_capture_interval_is_rejected():
+    with pytest.raises(ConfigError):
+        cfg(capture={"interval_s": -1})
+
+
+def test_an_unknown_capture_key_is_rejected():
+    with pytest.raises(ConfigError):
+        cfg(capture={"folder": "data/collected"})
+
+
+def test_rearm_absent_s_is_read_and_validated():
+    app = cfg(bowl_defaults={"policy": {"max_open_s": 30, "rearm_absent_s": 5}})
+    assert app.bowl("bowl1").policy.rearm_absent_s == 5
+    with pytest.raises(ConfigError):
+        cfg(bowl_defaults={"policy": {"rearm_absent_s": -1}})
