@@ -176,6 +176,10 @@ more-than-one-cat). They land in `data/collected/<label>/`, and photos worth
 nothing go to `data/collected/discard/` - a folder, not a delete, because an
 empty-bowl frame is exactly what a later model needs to learn to refuse.
 
+Got one wrong? `http://<pi>:8080/browse` lists any bucket newest-first - a
+mistake is nearly always one just made, so it is in the top-left corner - and a
+tap moves it to another bucket or back into the sorting queue.
+
 Then move the buckets you want to train on into `data/crops/<cat>/` and retrain. This is where most of the eventual
 accuracy comes from.
 

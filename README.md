@@ -74,6 +74,10 @@ skip, junk and one step of undo; the keyboard shortcuts are the label letters,
 page never polls, and photos are served straight off the disk, so sorting from
 the sofa costs the feeder almost nothing.
 
+`/browse` is the other half: pick a bucket, page through it newest-first, tap a
+photo and send it to another bucket — or back to `unsorted` to be judged again.
+That is how a mis-sort gets fixed after the one-step undo has gone.
+
 Nothing is ever deleted: "junk" is `data/collected/discard/`, not a bin.
 
 ## Commands

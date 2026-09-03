@@ -216,3 +216,100 @@ def test_the_last_few_photos_can_still_be_sorted(server, collected):
     assert list((collected / "unsorted").glob("*.jpg")) == []
     assert len(list((collected / "J").glob("*.jpg"))) == 5
     assert json.loads(get(f"{server}/sort/queue.json")[1])["counts"]["unsorted"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# browsing and re-filing
+# --------------------------------------------------------------------------- #
+
+def test_a_bucket_lists_newest_first_across_bowls(sorter, collected):
+    """A mis-sort is nearly always one just made, so it has to be at the top."""
+    for i, name in enumerate(sorter.pending()):
+        sorter.assign(name, "J")
+    # A photo from a different bowl, taken between two of the others.
+    (collected / "J" / "bowl2-20260902-090000-000.jpg").write_bytes(b"\xff\xd8x")
+
+    names, total = sorter.listing("J")
+    assert total == 6
+    assert names[0] == "bowl1-20260904-120000-000.jpg", "the newest, whichever bowl"
+    assert names == sorted(names, key=lambda n: n.split("-", 1)[1], reverse=True)
+
+
+def test_a_bucket_pages(sorter):
+    for name in sorter.pending():
+        sorter.assign(name, "F")
+    first, total = sorter.listing("F", offset=0, limit=2)
+    second, _ = sorter.listing("F", offset=2, limit=2)
+    assert total == 5
+    assert len(first) == len(second) == 2
+    assert not set(first) & set(second)
+
+
+def test_a_photo_can_be_moved_between_buckets(sorter, collected):
+    name = sorter.pending()[0]
+    sorter.assign(name, "J")
+    sorter.move(name, "J", "K")
+
+    assert (collected / "K" / name).is_file()
+    assert not (collected / "J" / name).exists()
+
+
+def test_a_photo_can_go_back_into_the_queue(sorter, collected):
+    name = sorter.pending()[0]
+    sorter.assign(name, "M")
+    sorter.move(name, "M", "unsorted")
+
+    assert (collected / "unsorted" / name).is_file()
+    assert name in sorter.pending(refresh=True), "it has to be sortable again"
+
+
+def test_an_unknown_bucket_is_refused(sorter):
+    with pytest.raises(SortError):
+        sorter.listing("../etc")
+    with pytest.raises(SortError):
+        sorter.move(sorter.pending()[0], "unsorted", "nowhere")
+
+
+def test_the_browse_page_and_its_json(server, collected):
+    status, body, _ = get(f"{server}/browse")
+    assert status == 200
+    assert b"/sort/browse.json" in body and b"/sort/move" in body
+
+    payload = json.loads(get(f"{server}/sort/browse.json?bucket=unsorted")[1])
+    assert payload["buckets"] == ["unsorted", *LABELS, DISCARD]
+    assert payload["total"] == 5
+    assert payload["names"][0] > payload["names"][-1], "newest first"
+
+
+def test_browsing_a_photo_in_a_bucket(server, collected):
+    name = sorted(p.name for p in (collected / "unsorted").glob("*.jpg"))[0]
+    post(f"{server}/sort/label", {"name": name, "label": "K"})
+
+    payload = json.loads(get(f"{server}/sort/browse.json?bucket=K")[1])
+    assert payload["names"] == [name]
+    status, body, _ = get(f"{server}/sort/photo/{name}?bucket=K")
+    assert status == 200 and body == (collected / "K" / name).read_bytes()
+
+
+def test_re_filing_a_mistake_over_http(server, collected):
+    name = sorted(p.name for p in (collected / "unsorted").glob("*.jpg"))[0]
+    post(f"{server}/sort/label", {"name": name, "label": "J"})
+
+    status, payload = post(f"{server}/sort/move", {"name": name, "from": "J", "to": "F"})
+    assert status == 200
+    assert payload["counts"]["F"] == 1 and payload["counts"]["J"] == 0
+    assert (collected / "F" / name).is_file()
+
+    _, payload = post(f"{server}/sort/move", {"name": name, "from": "F", "to": "unsorted"})
+    assert payload["counts"]["unsorted"] == 5, "back in the queue"
+
+
+def test_a_bad_move_over_http_is_a_400(server, collected):
+    name = sorted(p.name for p in (collected / "unsorted").glob("*.jpg"))[0]
+    for payload in ({"name": name, "from": "unsorted", "to": "../etc"},
+                    {"name": "../../passwd.jpg", "from": "unsorted", "to": "J"},
+                    {"name": name, "from": "J", "to": "K"}):        # not in J
+        with pytest.raises(urllib.error.HTTPError) as caught:
+            post(f"{server}/sort/move", payload)
+        assert caught.value.code == 400
+    assert (collected / "unsorted" / name).is_file()

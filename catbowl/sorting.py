@@ -31,6 +31,13 @@ MAX_LISTED = 200
 # a few seconds of staleness costs nothing and saves a syscall storm.
 LIST_TTL_S = 5.0
 
+# The queue and the browser both need "unsorted" to be addressable as a bucket:
+# re-filing a mistake means moving a photo back into it.
+UNSORTED = "unsorted"
+# One page of the browse grid. Thumbnails are the full captured crops - a few kB
+# each, and no server-side decode - so a page is cheap but not free.
+PAGE_SIZE = 40
+
 # Capture filenames are ours (bowl-date-time.jpg), but the name arrives back
 # from a browser, so it is treated as hostile until it matches this.
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.jpg$")
@@ -48,6 +55,8 @@ class Sorter:
         self.unsorted = self.root / "unsorted"
         self.labels = list(labels)
         self.buckets = [*self.labels, DISCARD]
+        # Everything a photo can be filed into or browsed from.
+        self.all_buckets = [UNSORTED, *self.buckets]
         self._clock = clock
         self._listing: list[str] = []
         self._listed_at = 0.0
@@ -96,32 +105,72 @@ class Sorter:
 
     # -- actions ------------------------------------------------------------ #
 
-    def path_for(self, name: str) -> Path:
+    def dir_for(self, bucket: str) -> Path:
+        """The folder behind a bucket name from the browser."""
+        if bucket == UNSORTED:
+            return self.unsorted
+        if bucket not in self.buckets:
+            raise SortError(
+                f"unknown bucket {bucket!r}; expected one of {', '.join(self.all_buckets)}"
+            )
+        return self.root / bucket
+
+    def path_for(self, name: str, bucket: str = UNSORTED) -> Path:
         """The file behind a name from the browser, or raise SortError."""
         if not SAFE_NAME.match(name):
             raise SortError(f"bad filename: {name!r}")
-        path = self.unsorted / name
+        directory = self.dir_for(bucket)
+        path = directory / name
         # Belt and braces: the regex already forbids separators and "..", but a
         # path that has escaped the folder must never be served or moved.
-        if path.parent.resolve() != self.unsorted.resolve():
+        if path.parent.resolve() != directory.resolve():
             raise SortError(f"bad filename: {name!r}")
         return path
 
+    def listing(self, bucket: str, offset: int = 0, limit: int = PAGE_SIZE) -> tuple[list[str], int]:
+        """One page of a bucket, newest first, with the bucket's total.
+
+        Newest first because a mistake is nearly always one just made, and the
+        order comes from the timestamp in the filename rather than from stat():
+        it is the same order, across every bowl, without a syscall per photo.
+        """
+        directory = self.dir_for(bucket)
+        if not directory.is_dir():
+            return [], 0
+        with os.scandir(directory) as entries:
+            names = [entry.name for entry in entries if entry.name.endswith(".jpg")]
+        names.sort(key=_taken_at, reverse=True)
+        offset = max(0, offset)
+        return names[offset:offset + max(1, limit)], len(names)
+
     def assign(self, name: str, label: str) -> str:
-        """File one photo under *label*. Returns the name it was filed as."""
-        if label not in self.buckets:
-            raise SortError(f"unknown label {label!r}; expected one of {', '.join(self.buckets)}")
-        source = self.path_for(name)
+        """File one photo out of the queue. Returns the name it was filed as."""
+        if label == UNSORTED:
+            raise SortError("a photo in the queue is already unsorted")
+        filed = self.move(name, UNSORTED, label)
+        self._last_move = (self.dir_for(label) / filed, name)
+        self._forget(name)
+        return filed
+
+    def move(self, name: str, source_bucket: str, target_bucket: str) -> str:
+        """Move one photo between buckets. Returns the name it landed under.
+
+        This is what fixes a mis-sort: a photo can go straight to another label,
+        or back to `unsorted` to be judged again from the phone.
+        """
+        if source_bucket == target_bucket:
+            return name
+        source = self.path_for(name, source_bucket)
+        target_dir = self.dir_for(target_bucket)
         if not source.is_file():
             raise SortError(f"no such photo: {name}")
 
-        target_dir = self.root / label
         target_dir.mkdir(parents=True, exist_ok=True)
         target = _free_path(target_dir / name)
         os.replace(source, target)          # same filesystem: an atomic rename
-        self._last_move = (target, name)
-        self._forget(name)
-        log.info("sorted %s -> %s", name, label)
+        if UNSORTED in (source_bucket, target_bucket):
+            self._listed_at = 0.0           # the queue's cached listing is stale
+        log.info("moved %s: %s -> %s", name, source_bucket, target_bucket)
         return target.name
 
     def undo(self) -> str | None:
@@ -143,6 +192,17 @@ class Sorter:
         if name in self._listing:
             self._listing.remove(name)
             self._remaining = max(0, self._remaining - 1)
+
+
+def _taken_at(name: str) -> str:
+    """A sort key that orders photos by when they were taken, across bowls.
+
+    Capture names are `<bowl>-<date>-<time>-<ms>.jpg`, so dropping the bowl id
+    leaves a key that sorts chronologically. Anything not shaped like that (a
+    file dropped in by hand) sorts last under the epoch, rather than raising.
+    """
+    parts = name.split("-", 1)
+    return parts[1] if len(parts) == 2 else "\x00" + name
 
 
 def _count_jpgs(directory: Path) -> int:
