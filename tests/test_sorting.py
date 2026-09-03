@@ -196,3 +196,23 @@ def test_sorting_is_404_when_capture_is_off():
         assert caught.value.code == 404
     finally:
         srv.shutdown()
+
+
+def test_the_last_few_photos_can_still_be_sorted(server, collected):
+    """The queue has to drain to zero.
+
+    The page tops up whenever it is holding fewer than a batch, which at the end
+    of a session is every single click; nothing about that may wedge.
+    """
+    for _ in range(20):
+        pending = json.loads(get(f"{server}/sort/queue.json?refresh=1")[1])["pending"]
+        if not pending:
+            break
+        status, payload = post(f"{server}/sort/label", {"name": pending[0], "label": "J"})
+        assert status == 200
+    else:
+        pytest.fail("the queue never emptied")
+
+    assert list((collected / "unsorted").glob("*.jpg")) == []
+    assert len(list((collected / "J").glob("*.jpg"))) == 5
+    assert json.loads(get(f"{server}/sort/queue.json")[1])["counts"]["unsorted"] == 0

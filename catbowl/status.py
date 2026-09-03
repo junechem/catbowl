@@ -71,7 +71,6 @@ async function tick(){
     <button onclick="hold('${b.bowl}',null)" ${b.manual?'':'disabled'}>auto</button>
    </div>
    ${b.manual ? '<div class=held>held '+b.manual+' by hand - press auto to resume</div>' : ''}
-   ${b.waiting_for_rearm && !b.manual ? '<div class=held>time limit reached - waiting for the cat to step away</div>' : ''}
    <img src="/snapshot/${b.bowl}.jpg?t=${Date.now()}" alt="">
   </div>`).join('');
  events.innerHTML = s.recent_events.map(e =>
@@ -111,21 +110,30 @@ SORT_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="w
 <div id=app></div>
 <div id=tally></div>
 <script>
-let queue = [], labels = [], counts = {}, busy = false;
+let queue = [], labels = [], counts = {}, busy = false, filling = false;
 
 async function fill(force){
- const response = await fetch('/sort/queue.json' + (force ? '?refresh=1' : ''));
- if (!response.ok){                       // capture is off, or the folder vanished
-  app.textContent = await response.text();
-  return;
- }
- const r = await response.json();
- labels = r.labels; counts = r.counts;
- // Keep anything already on screen; add only names we have not seen.
- const seen = new Set(queue);
- for (const n of r.pending) if (!seen.has(n)) queue.push(n);
- draw();
+ if (filling) return;                     // one listing in flight at a time
+ filling = true;
+ try {
+  const response = await fetch('/sort/queue.json' + (force ? '?refresh=1' : ''));
+  if (!response.ok){                      // capture is off, or the folder vanished
+   app.textContent = await response.text();
+   return;
+  }
+  const r = await response.json();
+  labels = r.labels; counts = r.counts;
+  // Keep anything already on screen; add only names we have not seen.
+  const seen = new Set(queue);
+  for (const n of r.pending) if (!seen.has(n)) queue.push(n);
+  draw();
+ } finally { filling = false; }
 }
+
+// Top up after a decision - never from draw(). draw() calling fill() calling
+// draw() spins forever as soon as the folder holds fewer photos than one batch,
+// which is precisely the end of every sorting session.
+function topUp(){ if (queue.length < 4) fill(true); }
 
 function draw(){
  const totals = labels.concat(['discard']).map(l => l + ' ' + (counts[l]||0));
@@ -145,7 +153,6 @@ function draw(){
  // Fetch the next two now, while a human is deciding about this one. They are
  // served with a long cache lifetime, so showing them costs no request.
  for (const n of queue.slice(1, 3)) new Image().src = '/sort/photo/' + n;
- if (queue.length < 4) fill(false);
 }
 
 async function pick(label){
@@ -160,6 +167,7 @@ async function pick(label){
  } catch (e) { queue.unshift(name); }
  busy = false;
  draw();
+ topUp();
 }
 
 function skip(){ if (queue.length){ queue.push(queue.shift()); draw(); } }
@@ -172,6 +180,7 @@ async function undo(){
  if (r.counts) counts = r.counts;
  busy = false;
  draw();
+ topUp();
 }
 
 addEventListener('keydown', e => {

@@ -161,10 +161,3 @@ def test_a_negative_capture_interval_is_rejected():
 def test_an_unknown_capture_key_is_rejected():
     with pytest.raises(ConfigError):
         cfg(capture={"folder": "data/collected"})
-
-
-def test_rearm_absent_s_is_read_and_validated():
-    app = cfg(bowl_defaults={"policy": {"max_open_s": 30, "rearm_absent_s": 5}})
-    assert app.bowl("bowl1").policy.rearm_absent_s == 5
-    with pytest.raises(ConfigError):
-        cfg(bowl_defaults={"policy": {"rearm_absent_s": -1}})

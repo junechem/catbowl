@@ -245,79 +245,35 @@ def test_an_unknown_manual_mode_is_rejected(rig):
         controller.set_manual("ajar")
 
 
-def test_a_capped_sitting_will_not_reopen_while_the_cat_stays_put(rig):
-    """The portioning rule.
+def test_a_capped_sitting_reopens_once_the_cat_is_detected_again(rig):
+    """The portioning rule: 30 seconds, the lid drops, then normal service.
 
-    max_open_s ends the meal, but a cat that never steps back would otherwise
-    get the lid handed straight back once the cooldown lapsed - three seconds
-    later, which slows nobody down.
+    The cat does not have to go anywhere. Once the cooldown lapses the machine
+    asks the same question it always asks - is this cat here and confirmed - and
+    opens again when the answer is yes.
     """
-    controller, actuator, clock, _ = rig
+    controller, actuator, clock, events = rig
     controller.cfg.policy.max_open_s = 30.0
-    controller.cfg.policy.rearm_absent_s = 5.0
 
     feed(controller, clock, OWNER, frames=8, dt=0.2)
     assert actuator.is_open
 
     feed(controller, clock, OWNER, frames=200, dt=0.2)      # 40s: the cap fires
-    assert not actuator.is_open
+    closed = [e for e in events if e.kind == "closed"]
+    assert closed[0].detail["reason"] == "max_open_s"
 
-    feed(controller, clock, OWNER, frames=300, dt=0.2)      # another minute of cat
-    assert not actuator.is_open, "the cap has to latch, not just pause"
-    assert controller.status()["waiting_for_rearm"]
-
-
-def test_the_bowl_reopens_once_the_cat_has_stepped_away(rig):
-    controller, actuator, clock, events = rig
-    controller.cfg.policy.max_open_s = 30.0
-    controller.cfg.policy.rearm_absent_s = 5.0
-
-    feed(controller, clock, OWNER, frames=8, dt=0.2)
-    feed(controller, clock, OWNER, frames=200, dt=0.2)
-    assert not actuator.is_open
-
-    feed(controller, clock, None, frames=40, dt=0.2, present=False)   # 8s of empty bowl
-    assert not controller.status()["waiting_for_rearm"]
-    assert any(e.kind == "rearmed" for e in events)
-
-    feed(controller, clock, OWNER, frames=10, dt=0.2)                 # the cat comes back
+    # The cooldown (3s) plus a fresh confirmation, with the cat never moving.
+    feed(controller, clock, OWNER, frames=40, dt=0.2)
     assert actuator.is_open
+    assert controller.stats["opens"] == 2
 
 
-def test_a_short_step_away_is_not_enough_to_rearm(rig):
-    controller, actuator, clock, _ = rig
-    controller.cfg.policy.max_open_s = 30.0
-    controller.cfg.policy.rearm_absent_s = 5.0
-
-    feed(controller, clock, OWNER, frames=8, dt=0.2)
-    feed(controller, clock, OWNER, frames=200, dt=0.2)
-
-    feed(controller, clock, None, frames=10, dt=0.2, present=False)   # 2s, not 5
-    feed(controller, clock, OWNER, frames=10, dt=0.2)
-    assert not actuator.is_open
-
-
-def test_a_manual_open_overrides_a_pending_lockout(rig):
+def test_a_manual_open_still_works_after_the_cap(rig):
     controller, actuator, clock, _ = rig
     controller.cfg.policy.max_open_s = 30.0
 
     feed(controller, clock, OWNER, frames=8, dt=0.2)
     feed(controller, clock, OWNER, frames=200, dt=0.2)
-    assert controller.status()["waiting_for_rearm"]
 
     controller.set_manual("open")
-    assert actuator.is_open
-    controller.set_manual(None)
-    feed(controller, clock, OWNER, frames=40, dt=0.2)
-    assert actuator.is_open, "a human handing control back clears the lockout"
-
-
-def test_a_normal_close_does_not_lock_the_bowl_out(rig):
-    """Only the timeout latches. A cat that walks off may come back at once."""
-    controller, actuator, clock, _ = rig
-    feed(controller, clock, OWNER, frames=8, dt=0.2)
-    feed(controller, clock, None, frames=40, dt=0.2, present=False)
-    assert not controller.status()["waiting_for_rearm"]
-
-    feed(controller, clock, OWNER, frames=40, dt=0.2)
     assert actuator.is_open

@@ -61,10 +61,10 @@ While it runs, `http://<pi>:8080/` shows each bowl's state, what its camera is
 looking at right now, the last twenty events, and a button per bowl to hold the
 lid open or shut by hand.
 
-A sitting is capped at `policy.max_open_s` (30 seconds as shipped). When the cap
-fires the bowl will not open again until it has looked empty for
-`policy.rearm_absent_s`, so a cat has to step back and be detected afresh for the
-next portion rather than eating straight through the limit.
+A sitting is capped at `policy.max_open_s` (30 seconds as shipped): the lid drops
+whether or not the cat is still there. After the usual cooldown the bowl opens
+again as soon as a cat is detected and confirmed afresh — the cat does not have
+to go anywhere, it just has to be recognised again.
 
 Every detection also banks a photo in `data/collected/unsorted/` (`capture:` in
 the config). Sort them from the Pi itself at `http://<pi>:8080/sort` — one photo

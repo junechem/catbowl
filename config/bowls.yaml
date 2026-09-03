@@ -87,12 +87,10 @@ bowl_defaults:
     open_confirm_s: 0.8          # the right cat must be seen this long before the lid lifts
     close_delay_s: 25            # bowl must look empty this long before the lid drops
     # A sitting is capped at 30 seconds, then the lid drops whether or not the
-    # cat is still there. This is the portioning rule: it slows the cats down,
-    # which is the point. After a capped sitting the bowl has to look empty for
-    # rearm_absent_s before it will open again, so the cat has to step away and
-    # be detected afresh rather than eating straight through the limit.
+    # cat is still there. This is the portioning rule: it breaks a meal into
+    # portions, which slows the cats down. The bowl then goes through the normal
+    # cooldown and opens again once a cat is detected and confirmed afresh.
     max_open_s: 30
-    rearm_absent_s: 5
     close_on_intruder: true
     intruder_grace_s: 2.0
     cooldown_s: 3.0

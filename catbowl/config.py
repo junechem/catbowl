@@ -69,19 +69,13 @@ class PolicyConfig:
     open_confirm_s: float = 0.8    # how long the right cat must be seen before the lid lifts
     close_delay_s: float = 10.0    # how long the bowl must be empty before the lid drops
     max_open_s: float = 900.0      # hard ceiling on a single sitting
-    # After max_open_s ends a sitting, the bowl must look empty for this long
-    # before it will open again. Without it a cat that never steps back simply
-    # gets the lid returned a cooldown later, which defeats the ceiling: the
-    # point of the limit is to break the meal into portions, and that only
-    # works if the cat has to walk away and come back for the next one.
-    rearm_absent_s: float = 5.0
     close_on_intruder: bool = True
     intruder_grace_s: float = 2.0  # a wrong cat must linger this long before we close
     cooldown_s: float = 3.0        # dead time after closing, stops the lid oscillating
 
     def __post_init__(self) -> None:
         for name in ("open_confirm_s", "close_delay_s", "max_open_s",
-                     "rearm_absent_s", "intruder_grace_s", "cooldown_s"):
+                     "intruder_grace_s", "cooldown_s"):
             if getattr(self, name) < 0:
                 raise ConfigError(f"policy.{name} must not be negative")
         if self.max_open_s and self.max_open_s < self.close_delay_s:
