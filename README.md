@@ -57,7 +57,10 @@ Then:
    at boot and, through a udev rule, whenever a camera is plugged in; with no
    camera present it stays down instead of restart-looping. The script also
    pre-fetches the detector weights, so the first boot after a power cut does
-   not wait on the network.
+   not wait on the network. Until a classifier is trained it installs the
+   service with `--no-model` — any detected animal opens the lid, but the
+   cameras run and every detection is banked for the dataset. Re-run the
+   script once you have a model and the flag goes away.
 
 While it runs, `http://<pi>:8080/` shows each bowl's state, what its camera is
 looking at right now, the last twenty events, and a button per bowl to hold the

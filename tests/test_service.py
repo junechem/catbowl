@@ -29,14 +29,17 @@ def test_the_unit_exists_and_starts_one_thing():
     assert len(directives("ExecStart")) == 1
 
 
-def test_the_unit_command_line_actually_parses():
-    argv = shlex.split(directives("ExecStart")[0])
+@pytest.mark.parametrize("flags", ["", "--no-model"])
+def test_the_unit_command_line_actually_parses(flags):
+    """Both the shape the installer writes with a model, and the one without."""
+    argv = shlex.split(directives("ExecStart")[0].replace("__FLAGS__", flags))
     assert argv[1:3] == ["-m", "catbowl"], f"expected `python -m catbowl ...`, got {argv}"
 
     # Everything after `-m catbowl` is exactly what argparse sees on the Pi.
     args = build_parser().parse_args(argv[3:])
     assert args.command == "run"
     assert args.config == "config/bowls.yaml"
+    assert args.no_model is bool(flags)
 
 
 def test_the_unit_waits_for_a_camera_instead_of_looping():

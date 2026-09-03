@@ -30,10 +30,26 @@ for group in video i2c gpio; do
     fi
 done
 
+# Without a trained classifier the feeder refuses to start, which as a service
+# is a restart loop rather than an error message. Until there is a model, run
+# in --no-model: every detected animal opens the lid, but the cameras are up
+# and every detection is banked for the dataset that fixes it.
+CLASSIFIER="$(./.venv/bin/python -c \
+    "from catbowl.config import load_config; print(load_config('config/bowls.yaml').recognition.classifier)" \
+    2>/dev/null || echo models/classifier.joblib)"
+RUN_FLAGS=""
+if [[ ! -f "$CLASSIFIER" ]]; then
+    RUN_FLAGS="--no-model"
+    echo "!!  No classifier at $CLASSIFIER, so the service will run with --no-model:"
+    echo "!!  ANY cat - or hand, or dog - that the detector sees opens the lid."
+    echo "!!  Train one (docs/training.md) and re-run this script to turn that off."
+fi
+
 echo "==> Installing $UNIT (user $RUN_AS, dir $HERE)"
 sed -e "s|__USER__|$RUN_AS|g" \
     -e "s|__DIR__|$HERE|g" \
     -e "s|__HOME__|$RUN_HOME|g" \
+    -e "s| *__FLAGS__|${RUN_FLAGS:+ $RUN_FLAGS}|g" \
     -e "s|^SupplementaryGroups=.*|SupplementaryGroups=${GROUPS_WANTED[*]}|" \
     systemd/catbowl.service | sudo tee "$UNIT" >/dev/null
 

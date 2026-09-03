@@ -17,7 +17,10 @@ WorkingDirectory=__DIR__
 # A camera plugged in at boot may not have finished enumerating when udev fires.
 ExecStartPre=/bin/sleep 2
 # --config is a top-level flag: it belongs before the subcommand, not after.
-ExecStart=__DIR__/.venv/bin/python -m catbowl --config config/bowls.yaml run
+# __FLAGS__ is normally empty. install_service.sh puts --no-model there when
+# no classifier has been trained yet, so the rig collects photos instead of
+# exiting; re-run the installer once you have a model to take it back out.
+ExecStart=__DIR__/.venv/bin/python -m catbowl --config config/bowls.yaml run __FLAGS__
 Restart=always
 RestartSec=5
 # If the process dies, systemd restarts it and the first thing FeederApp does is
