@@ -33,7 +33,12 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=__DIR__
+# The checkout, plus torchvision's weight cache: the detector downloads the
+# ssdlite weights into ~/.cache/torch the first time it is built, and under
+# ProtectHome=read-only that is an OSError and a restart loop. Allow-listed
+# rather than redirected, so the service shares one cache with the runs you
+# start by hand. The leading `-` keeps the unit startable before it exists.
+ReadWritePaths=__DIR__ -__HOME__/.cache/torch
 
 [Install]
 WantedBy=multi-user.target

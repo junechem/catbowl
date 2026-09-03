@@ -2,15 +2,16 @@
 # Install catbowl as a systemd service that starts itself at boot, and whenever
 # a camera is plugged in afterwards.
 #
-# The shipped unit carries __USER__/__DIR__ placeholders rather than hard-coded
-# paths, because the checkout is rarely at /home/pi/catbowl. This script fills
-# them in from wherever it is being run.
+# The shipped unit carries __USER__/__DIR__/__HOME__ placeholders rather than
+# hard-coded paths, because the checkout is rarely at /home/pi/catbowl. This
+# script fills them in from wherever it is being run.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HERE"
 
 RUN_AS="${SUDO_USER:-$USER}"
+RUN_HOME="$(getent passwd "$RUN_AS" | cut -d: -f6)"
 UNIT=/etc/systemd/system/catbowl.service
 RULE=/etc/udev/rules.d/99-catbowl.rules
 
@@ -32,6 +33,7 @@ done
 echo "==> Installing $UNIT (user $RUN_AS, dir $HERE)"
 sed -e "s|__USER__|$RUN_AS|g" \
     -e "s|__DIR__|$HERE|g" \
+    -e "s|__HOME__|$RUN_HOME|g" \
     -e "s|^SupplementaryGroups=.*|SupplementaryGroups=${GROUPS_WANTED[*]}|" \
     systemd/catbowl.service | sudo tee "$UNIT" >/dev/null
 
@@ -39,6 +41,18 @@ echo "==> Installing $RULE (starts catbowl when a camera appears)"
 sudo cp systemd/99-catbowl.rules "$RULE"
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=video4linux --action=add
+
+# The detector's weights land in ~/.cache/torch on first use. Fetching them now
+# means the first boot after a power cut does not depend on the network coming
+# up first - and if this fails, the service just downloads them itself later.
+echo "==> Pre-fetching the detector weights into $RUN_HOME/.cache/torch"
+sudo -u "$RUN_AS" env HOME="$RUN_HOME" ./.venv/bin/python - <<'WEIGHTS' || \
+    echo "    could not pre-fetch - the service will download them on first run"
+from torchvision.models.detection import SSDLite320_MobileNet_V3_Large_Weights
+
+SSDLite320_MobileNet_V3_Large_Weights.DEFAULT.get_state_dict(progress=False)
+print("    weights ready")
+WEIGHTS
 
 sudo systemctl daemon-reload
 sudo systemctl enable catbowl.service

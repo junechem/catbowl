@@ -44,7 +44,19 @@ def test_the_unit_waits_for_a_camera_instead_of_looping():
     assert directives("Restart") == ["always"]
 
 
-@pytest.mark.parametrize("placeholder", ["__USER__", "__DIR__"])
+def test_the_torch_cache_is_writable():
+    """ProtectHome=read-only made the first weight download a restart loop.
+
+    torchvision writes the ssdlite weights to ~/.cache/torch the first time the
+    detector is built, which under a read-only home is an OSError at startup,
+    every five seconds, for ever.
+    """
+    paths = directives("ReadWritePaths")[0].split()
+    assert "__DIR__" in paths
+    assert any(p.lstrip("-").endswith("/.cache/torch") for p in paths), paths
+
+
+@pytest.mark.parametrize("placeholder", ["__USER__", "__DIR__", "__HOME__"])
 def test_the_placeholders_are_still_there_for_the_installer(placeholder):
     """install_service.sh substitutes these; a hard-coded path would ship my Pi."""
     assert placeholder in UNIT.read_text()

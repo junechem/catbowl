@@ -55,7 +55,9 @@ Then:
    every decision without touching a servo. Read [docs/safety.md](docs/safety.md).
 6. **Install the service** — `./scripts/install_service.sh`. It starts catbowl
    at boot and, through a udev rule, whenever a camera is plugged in; with no
-   camera present it stays down instead of restart-looping.
+   camera present it stays down instead of restart-looping. The script also
+   pre-fetches the detector weights, so the first boot after a power cut does
+   not wait on the network.
 
 While it runs, `http://<pi>:8080/` shows each bowl's state, what its camera is
 looking at right now, the last twenty events, and a button per bowl to hold the
