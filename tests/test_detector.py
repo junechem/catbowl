@@ -75,7 +75,7 @@ def test_a_confirmation_is_cached_for_the_rest_of_the_visit():
     assert gate.detect(FRAME) is IS_CAT
     for _ in range(10):               # cat settles in and keeps eating
         clock.advance(0.1)
-        assert gate.detect(FRAME) is MOVED
+        assert gate.detect(FRAME).bbox == MOVED.bbox
     assert confirm.calls == 1, "one confirmation should cover the whole visit"
 
 
@@ -155,7 +155,11 @@ def test_a_head_down_cat_keeps_the_lid_open():
 
     for _ in range(60):               # 24 s of eating
         clock.advance(0.4)
-        assert gate.detect(FRAME) is MOVED, "the cat is still there"
+        detection = gate.detect(FRAME)
+        assert detection is not None, "the cat is still there"
+        # Not `is MOVED`: the box reported between confirmations is the motion
+        # widened to the cat ssdlite last saw. Same box here, new object.
+        assert detection.bbox == MOVED.bbox
 
     assert confirm.calls > 1, "it kept checking, in case the cat was swapped"
 
@@ -200,3 +204,91 @@ def test_an_unknown_detector_type_is_rejected():
 def test_negative_gate_timings_are_rejected():
     with pytest.raises(ConfigError, match="confirm_every_s"):
         DetectorConfig(confirm_every_s=-1)
+
+
+# --------------------------------------------------------------------------- #
+# what gets cropped between confirmations
+# --------------------------------------------------------------------------- #
+
+# A cat settled at a bowl barely moves. Background subtraction reports only the
+# part that did: one ear, or the end of a tail.
+TUFT = Detection((40, 20, 6, 5), 0.1, "motion")
+WHOLE_CAT = Detection((10, 10, 50, 40), 0.9, "ssdlite")
+
+
+def in_a_visit(motion, confirm, clock, **cfg_kwargs):
+    """A gate that has already seen and confirmed a cat."""
+    gate = build(motion, confirm, clock, **cfg_kwargs)
+    assert gate.detect(FRAME) is WHOLE_CAT
+    return gate
+
+
+def test_a_tuft_of_fur_is_widened_to_the_cat_it_belongs_to():
+    """The bug that made the collected dataset useless.
+
+    Between confirmations the gate used to hand back the raw motion box, so
+    most captured crops were a few pixels of moving fur - unlabellable by a
+    human, never mind a classifier.
+    """
+    clock = FakeClock()
+    motion, confirm = Scripted(WHOLE_CAT), Scripted(WHOLE_CAT)
+    gate = in_a_visit(motion, confirm, clock)
+
+    motion.result = TUFT
+    clock.advance(0.5)                      # still inside confirm_every_s
+    detection = gate.detect(FRAME)
+
+    assert confirm.calls == 1, "widening must not cost another inference"
+    assert detection.bbox == (10, 10, 50, 40), "the whole animal, not the ear"
+
+
+def test_the_box_follows_a_cat_that_shifts_along_the_bowl():
+    """Union, not replacement: the remembered box is the size, motion is the place."""
+    clock = FakeClock()
+    motion = Scripted(WHOLE_CAT)
+    gate = in_a_visit(motion, Scripted(WHOLE_CAT), clock)
+
+    motion.result = Detection((70, 15, 10, 10), 0.2, "motion")   # moved right
+    clock.advance(0.5)
+    assert gate.detect(FRAME).bbox == (10, 10, 70, 40)
+
+
+def test_a_head_down_cat_is_still_cropped_whole():
+    """ssdlite refusing is the normal answer for a cat with its face in the bowl,
+    and confirm_grace_s keeps the visit alive through it. The crop has to survive
+    it too, or every frame of a cat actually eating is a tuft."""
+    clock = FakeClock()
+    motion, confirm = Scripted(WHOLE_CAT), Scripted(WHOLE_CAT)
+    gate = in_a_visit(motion, confirm, clock, confirm_every_s=2.0, confirm_grace_s=25.0)
+
+    motion.result, confirm.result = TUFT, None
+    clock.advance(3.0)                      # past the re-check: ssdlite says no cat
+    detection = gate.detect(FRAME)
+
+    assert confirm.calls == 2, "the re-check must still have happened"
+    assert detection is not None, "confirm_grace_s keeps the visit alive"
+    assert detection.bbox == (10, 10, 50, 40)
+
+
+def test_the_next_visit_does_not_inherit_the_last_cat_s_outline():
+    clock = FakeClock()
+    motion, confirm = Scripted(WHOLE_CAT), Scripted(WHOLE_CAT)
+    gate = in_a_visit(motion, confirm, clock, visit_gap_s=2.0)
+
+    motion.result = None                    # the cat leaves
+    clock.advance(5.0)
+    assert gate.detect(FRAME) is None
+
+    # A new visit, confirmed with a box of its own, must not be unioned with
+    # the cat that was here before - that would crop in half a metre of floor.
+    motion.result = TUFT
+    confirm.result = Detection((90, 50, 20, 20), 0.9, "ssdlite")
+    clock.advance(5.0)
+    assert gate.detect(FRAME).bbox == (90, 50, 20, 20)
+
+
+def test_reset_forgets_the_remembered_box():
+    clock = FakeClock()
+    gate = in_a_visit(Scripted(WHOLE_CAT), Scripted(WHOLE_CAT), clock)
+    gate.reset()
+    assert gate._last_cat is None

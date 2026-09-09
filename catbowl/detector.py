@@ -73,6 +73,15 @@ class Detection:
         return np.ascontiguousarray(image[y0:y1, x0:x1])
 
 
+def _union(a: tuple[int, int, int, int],
+           b: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """The smallest x, y, w, h box containing both."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    x, y = min(ax, bx), min(ay, by)
+    return x, y, max(ax + aw, bx + bw) - x, max(ay + ah, by + bh) - y
+
+
 class Detector:
     def detect(self, image: np.ndarray) -> Detection | None:  # pragma: no cover - interface
         raise NotImplementedError
@@ -170,9 +179,16 @@ class SsdliteCatDetector(Detector):
 class HybridCatDetector(Detector):
     """Motion triggers; ssdlite decides whether it was a cat.
 
-    The two boxes are not interchangeable. ssdlite's is tight on the animal and
-    makes a better crop for the classifier, so it is preferred whenever it is
-    fresh; between confirmations the motion box stands in.
+    The two boxes are not interchangeable and the difference matters more than
+    it looks. ssdlite's is the whole animal; the motion box is only the part of
+    it that moved since the last frame, which for a cat settled at a bowl is a
+    twitching tail or one ear. Cropping to that gives the classifier a tuft of
+    fur and asks it which cat that is.
+
+    So the last confirmed cat box is remembered for the length of a visit, and
+    every frame in between is reported as that box united with the current
+    motion - never smaller than the animal ssdlite actually saw, and still
+    following it if it shifts.
     """
 
     def __init__(
@@ -193,6 +209,10 @@ class HybridCatDetector(Detector):
         self._last_yes_at = 0.0
         self._next_check_at = 0.0
         self._rejected_until = 0.0
+        # The most recent box ssdlite drew round the animal, for as long as the
+        # visit lasts. Refreshed every confirm_every_s, and dropped when the cat
+        # leaves so the next visit cannot inherit the last cat's outline.
+        self._last_cat: Detection | None = None
 
     def _detector(self) -> Detector:
         if self._confirm is None:
@@ -209,6 +229,7 @@ class HybridCatDetector(Detector):
             # subtraction stops reporting it long before it has left.
             if self._visiting and now - self._last_motion_at >= self.cfg.visit_gap_s:
                 self._visiting = False
+                self._last_cat = None
             return None
 
         self._last_motion_at = now
@@ -224,26 +245,45 @@ class HybridCatDetector(Detector):
             self._last_yes_at = now
             self._rejected_until = 0.0
             self._next_check_at = now + self.cfg.confirm_every_s
+            self._last_cat = cat
             return cat
 
         # In a visit. Re-ask periodically so a cat swapped for a dog is caught,
         # but treat a refusal as weak evidence: it is the normal answer for a
         # head-down cat. Only a sustained run of them ends the visit.
         if now < self._next_check_at:
-            return motion
+            return self._whole_animal(motion)
         self._next_check_at = now + self.cfg.confirm_every_s
         cat = self._detector().detect(image)
         if cat is not None:
             self._last_yes_at = now
+            self._last_cat = cat
             return cat
         if now - self._last_yes_at >= self.cfg.confirm_grace_s:
             self._visiting = False
+            self._last_cat = None
             self._rejected_until = now + self.cfg.reject_backoff_s
             return None
-        return motion
+        # ssdlite refused, which is the ordinary answer for a head-down cat. The
+        # animal is still there, so the box it was last seen with still applies.
+        return self._whole_animal(motion)
+
+    def _whole_animal(self, motion: Detection) -> Detection:
+        """*motion*, widened to include the whole cat ssdlite last drew.
+
+        Union rather than replacement: the remembered box says how big the
+        animal is, the motion box says where it is now, and a cat that shifts
+        along the bowl between confirmations needs both. Only ever the latest
+        confirmed box, so this cannot creep outwards over a long visit.
+        """
+        if self._last_cat is None:
+            return motion
+        x, y, w, h = _union(motion.bbox, self._last_cat.bbox)
+        return Detection((x, y, w, h), motion.score, "hybrid")
 
     def reset(self) -> None:
         self._motion.reset()
+        self._last_cat = None
         self._visiting = False
         self._last_motion_at = 0.0
         self._last_yes_at = 0.0
