@@ -23,22 +23,31 @@ class FakeClock:
 
 
 @pytest.fixture
-def rig():
-    clock = FakeClock()
-    events: list[Event] = []
-    bowl = BowlConfig(
-        id="bowl1",
-        cat=OWNER,
-        servos=[ServoConfig(channel=0)],
-        policy=PolicyConfig(
-            open_confirm_s=1.0, close_delay_s=5.0, max_open_s=60.0,
-            close_on_intruder=True, intruder_grace_s=2.0, cooldown_s=3.0,
-        ),
-    )
-    actuator = MockActuator("bowl1", bowl.servos, ActuatorConfig(driver="mock"))
-    controller = BowlController(bowl, actuator, vote_window=4, votes_required=3,
-                                clock=clock, on_event=events.append)
-    return controller, actuator, clock, events
+def rig_factory():
+    """Builds a controller, so a test can vary one policy knob."""
+    def build(**policy):
+        clock = FakeClock()
+        events: list[Event] = []
+        bowl = BowlConfig(
+            id="bowl1",
+            cat=OWNER,
+            servos=[ServoConfig(channel=0)],
+            policy=PolicyConfig(
+                **{"open_confirm_s": 1.0, "close_delay_s": 5.0, "max_open_s": 60.0,
+                   "close_on_intruder": True, "intruder_grace_s": 2.0, "cooldown_s": 3.0,
+                   **policy},
+            ),
+        )
+        actuator = MockActuator("bowl1", bowl.servos, ActuatorConfig(driver="mock"))
+        controller = BowlController(bowl, actuator, vote_window=4, votes_required=3,
+                                    clock=clock, on_event=events.append)
+        return controller, actuator, clock, events
+    return build
+
+
+@pytest.fixture
+def rig(rig_factory):
+    return rig_factory()
 
 
 def feed(controller, clock, label, frames=4, dt=0.2, present=True, confidence=0.9):
@@ -67,15 +76,42 @@ def test_opens_for_its_own_cat_after_confirmation(rig):
     assert events[0].cat == OWNER
 
 
-def test_single_stray_frame_never_opens_a_lid(rig):
+def test_one_confident_sighting_is_enough_to_open(rig):
+    """A cat walking up has no history, and waiting for a consensus costs it
+    seconds at the bowl. One frame the classifier was sure about opens the lid;
+    being wrong is caught by the intruder rule a moment later."""
     controller, actuator, clock, _ = rig
-    for _ in range(10):
-        controller.observe(True, OWNER, 0.9)     # one good frame ...
+    controller.observe(True, OWNER, 0.9)         # one good frame ...
+    for _ in range(2):                           # ... buried in noise
         clock.advance(0.2)
-        for _ in range(3):                       # ... buried in noise
-            controller.observe(True, "unknown", 0.2)
-            clock.advance(0.2)
-    assert controller.state is BowlState.CLOSED
+        controller.observe(True, "unknown", 0.2)
+    clock.advance(0.7)
+    controller.observe(True, "unknown", 0.2)     # open_confirm_s has now passed
+    assert actuator.is_open
+
+
+def test_a_bowl_can_be_told_to_wait_for_a_consensus(rig_factory):
+    """policy.open_votes restores the cautious behaviour for anyone who wants it."""
+    controller, actuator, clock, _ = rig_factory(open_votes=3)
+    controller.observe(True, OWNER, 0.9)
+    for _ in range(3):
+        clock.advance(0.2)
+        controller.observe(True, "unknown", 0.2)
+    clock.advance(1.0)
+    controller.observe(True, "unknown", 0.2)
+    assert not actuator.is_open, "one sighting is not three"
+
+    feed(controller, clock, OWNER, frames=3)
+    assert actuator.is_open
+
+
+def test_the_owner_cannot_open_its_lid_while_another_cat_is_in_front_of_it(rig):
+    """One frame of J is enough, but not while K is what most frames show."""
+    controller, actuator, clock, _ = rig
+    feed(controller, clock, INTRUDER, frames=3)
+    controller.observe(True, OWNER, 0.9)         # a glimpse of the owner behind
+    clock.advance(1.2)
+    controller.observe(True, INTRUDER, 0.9)
     assert not actuator.is_open
 
 
@@ -161,9 +197,10 @@ def test_stale_votes_decay_when_the_bowl_is_empty(rig):
     assert controller.votes.tally() == {}
 
     controller.observe(True, OWNER, 0.9)                    # one fresh frame
+    assert controller.votes.tally() == {OWNER: 1}, "the stale votes are gone"
     clock.advance(2.0)
     controller.observe(True, OWNER, 0.9)
-    assert not actuator.is_open, "old votes must not combine with new ones to open a lid"
+    assert actuator.is_open, "a fresh sighting opens on its own merits"
 
 
 def test_force_close_parks_the_lid(rig):
@@ -365,3 +402,14 @@ def test_a_second_cat_arriving_closes_an_open_lid(rig):
     assert not actuator.is_open
     reasons = [e.detail.get("reason") for e in events if e.kind == "closed"]
     assert "intruder" in reasons
+
+
+def test_a_sighting_that_has_scrolled_out_of_the_window_does_not_open(rig):
+    """"One sighting" means one the camera can still see, not one from a minute ago."""
+    controller, actuator, clock, _ = rig
+    controller.observe(True, OWNER, 0.9)
+    for _ in range(4):                           # vote_window is 4: the owner falls out
+        clock.advance(0.3)
+        controller.observe(True, "unknown", 0.2)
+    assert controller.votes.count(OWNER) == 0
+    assert not actuator.is_open

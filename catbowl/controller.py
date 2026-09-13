@@ -193,7 +193,14 @@ class BowlController:
 
     def _tick_closed(self, now: float, present: bool) -> None:
         winner = self.last_decision
-        if winner == self.cat and present and self._owner_since is not None:
+        # Opening asks less than every other transition: policy.open_votes
+        # sightings of the owner, not a consensus. See PolicyConfig.open_votes
+        # for why. The owner must still not be outvoted by another cat - one
+        # frame of J does not open J's bowl while K is standing in front of it.
+        owner_votes = self.votes.count(self.cat)
+        if (present and self._owner_since is not None
+                and owner_votes >= self.cfg.policy.open_votes
+                and self.votes.leader(self.cat)):
             if now - self._owner_since >= self.cfg.policy.open_confirm_s:
                 self._open(now)
             return

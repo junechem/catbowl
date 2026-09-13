@@ -147,5 +147,21 @@ class VoteTracker:
             return label
         return None
 
+    def count(self, label: str) -> int:
+        """How many of the frames in the window are *label*."""
+        return sum(1 for vote in self._votes if vote == label)
+
+    def leader(self, label: str) -> bool:
+        """True if no other cat is better represented in the window than *label*.
+
+        Used for opening, where the bar is one confident sighting rather than a
+        consensus: one frame of J is enough to lift J's lid, but not while K is
+        the cat most of the window can see.
+        """
+        mine = self.count(label)
+        return all(self.count(other) <= mine
+                   for other in set(self._votes)
+                   if other not in (UNKNOWN, OTHER, label))
+
     def tally(self) -> dict[str, int]:
         return dict(Counter(self._votes))

@@ -67,6 +67,15 @@ class ServoConfig:
 @dataclass
 class PolicyConfig:
     open_confirm_s: float = 0.8    # how long the right cat must be seen before the lid lifts
+    # Agreeing frames needed to *open*, which is deliberately not the same bar
+    # as recognition.votes_required, the bar for everything else. A cat walking
+    # up has no history, so waiting for a consensus costs it seconds at the bowl
+    # for protection that consecutive near-identical frames cannot really give:
+    # a hard frame errs the same way twice. A wrong open is caught by the
+    # intruder rule a moment later and costs the wrong cat a mouthful, while a
+    # slow open costs the right cat its meal every single time. 1 = open on the
+    # first confident sighting.
+    open_votes: int = 1
     close_delay_s: float = 10.0    # how long the bowl must be empty before the lid drops
     max_open_s: float = 900.0      # hard ceiling on a single sitting
     close_on_intruder: bool = True
@@ -82,6 +91,8 @@ class PolicyConfig:
                      "intruder_grace_s", "cooldown_s", "reassert_closed_s"):
             if getattr(self, name) < 0:
                 raise ConfigError(f"policy.{name} must not be negative")
+        if self.open_votes < 1:
+            raise ConfigError("policy.open_votes must be at least 1")
         if self.max_open_s and self.max_open_s < self.close_delay_s:
             raise ConfigError("policy.max_open_s must be larger than policy.close_delay_s")
 

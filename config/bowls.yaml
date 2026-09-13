@@ -85,6 +85,16 @@ bowl_defaults:
     detach_when_idle: false
   policy:
     open_confirm_s: 0.8          # the right cat must be seen this long before the lid lifts
+    # Agreeing frames needed to open, which is deliberately a lower bar than
+    # recognition.votes_required (the bar for every other transition). A cat
+    # walking up has no history, and making it wait for a consensus costs it
+    # seconds at the bowl in exchange for protection that near-identical
+    # consecutive frames cannot really give - a hard frame errs the same way
+    # twice. A wrong open is caught by the intruder rule a moment later and
+    # costs the wrong cat a mouthful; a slow open costs the right cat its meal
+    # every time. The owner still cannot open its lid while another cat is
+    # better represented in the window.
+    open_votes: 1
     close_delay_s: 25            # bowl must look empty this long before the lid drops
     # A sitting is capped at 30 seconds, then the lid drops whether or not the
     # cat is still there. This is the portioning rule: it breaks a meal into

@@ -82,13 +82,17 @@ Every listing on `/browse` is already in time order - the capture filename
 carries the timestamp, so a visit's frames sit together in the grid whichever
 folder they are in.
 
-`presort` uses time as evidence, as above. The **running rig does not**, beyond
-the vote window: `votes_required` of the last `vote_window` frames must agree,
-which is about a second of history and no more. It carries no memory of who was
-just here. That is deliberate so far - a lid that remembers is a lid that can be
-wrong for longer - but a visit-level prior with hysteresis (harder to switch
-identity than to keep it) is the obvious next refinement once the model is
-trusted.
+`presort` uses time as evidence, as above. The **running rig uses very little**.
+Opening asks for `policy.open_votes` sightings - one, by default - because a cat
+walking up has no history to consult and every frame it waits is a frame it
+stands at a shut bowl. Everything after that (intruder, close, crowd) asks for
+`votes_required` of the last `vote_window` frames, which is where the caution
+belongs: by then there *is* context, and a wrong open costs the wrong cat a
+mouthful while a slow open costs the right cat its meal.
+
+Beyond that the rig carries no memory of who was just here. A visit-level prior
+with hysteresis - harder to switch identity mid-meal than to keep it - is the
+obvious next refinement once the model is trusted.
 
 ## Open questions
 
