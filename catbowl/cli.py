@@ -57,11 +57,12 @@ def cmd_run(args) -> int:
         cfg.capture.dir = args.capture_dir
     if args.no_capture:
         cfg.capture.dir = None
-    if cfg.capture.dir:
-        log.info("capturing detections to %s/unsorted (sort them by cat, then train)",
-                 cfg.capture.dir)
-
     app = FeederApp(cfg, no_model=args.no_model)
+    if cfg.capture.dir:
+        # Where they land depends on whether anything is qualified to guess.
+        where = "unsorted" if args.no_model else "proposed/<the model's guess>"
+        log.info("capturing detections to %s/%s (check them at /browse, then train)",
+                 cfg.capture.dir, where)
 
     def handle_signal(signum, _frame):
         log.info("caught %s", signal.Signals(signum).name)

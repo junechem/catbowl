@@ -70,7 +70,10 @@ class BowlWorker(threading.Thread):
         self._stop.set()
 
     def run(self) -> None:
-        log.info("%s: watching for %s", self.cfg.id, self.cfg.cat)
+        rationed = [f"{cat} ({self.cfg.rations[cat].seconds:g}s per "
+                    f"{self.cfg.rations[cat].per_s / 60:g}min)" if cat in self.cfg.rations else cat
+                    for cat in self.cfg.cats]
+        log.info("%s: watching for %s", self.cfg.id, ", ".join(rationed))
         last_present, last_label, last_conf = False, None, 0.0
 
         while not self._stop.is_set():
