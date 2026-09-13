@@ -34,6 +34,12 @@ LIST_TTL_S = 5.0
 # The queue and the browser both need "unsorted" to be addressable as a bucket:
 # re-filing a mistake means moving a photo back into it.
 UNSORTED = "unsorted"
+# Where `catbowl presort` puts the classifier's guesses, one folder per label.
+# Browsable like any other bucket, so checking the machine's work is a grid of
+# thumbnails rather than a folder opened over ssh, but never a filing target:
+# the point of the exercise is to get photos *out* of here and into a bucket a
+# person has vouched for.
+PROPOSED = "proposed"
 # One page of the browse grid. Thumbnails are the full captured crops - a few kB
 # each, and no server-side decode - so a page is cheap but not free.
 PAGE_SIZE = 40
@@ -41,6 +47,9 @@ PAGE_SIZE = 40
 # Capture filenames are ours (bowl-date-time.jpg), but the name arrives back
 # from a browser, so it is treated as hostile until it matches this.
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.jpg$")
+# Bucket names under proposed/ come from a directory listing rather than from a
+# browser, but they end up in a path, so they are held to the same standard.
+SAFE_BUCKET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,40}$")
 
 
 class SortError(ValueError):
@@ -55,14 +64,32 @@ class Sorter:
         self.unsorted = self.root / "unsorted"
         self.labels = list(labels)
         self.buckets = [*self.labels, DISCARD]
-        # Everything a photo can be filed into or browsed from.
-        self.all_buckets = [UNSORTED, *self.buckets]
+        self.proposed = self.root / PROPOSED
         self._clock = clock
         self._listing: list[str] = []
         self._listed_at = 0.0
         self._remaining = 0
         # One step of undo: the last move, as (destination, original name).
         self._last_move: tuple[Path, str] | None = None
+
+    @property
+    def review_buckets(self) -> list[str]:
+        """`proposed/<label>` for each folder presort has written, if any.
+
+        Read from disk every time rather than at construction: presort usually
+        runs long after the service started, and its folders should appear in
+        the browser without a restart.
+        """
+        if not self.proposed.is_dir():
+            return []
+        with os.scandir(self.proposed) as entries:
+            names = [e.name for e in entries if e.is_dir() and SAFE_BUCKET.match(e.name)]
+        return [f"{PROPOSED}/{name}" for name in sorted(names)]
+
+    @property
+    def all_buckets(self) -> list[str]:
+        """Everything a photo can be browsed from, in tab order."""
+        return [UNSORTED, *self.buckets, *self.review_buckets]
 
     # -- queue -------------------------------------------------------------- #
 
@@ -94,6 +121,7 @@ class Sorter:
     def counts(self) -> dict[str, int]:
         """How many photos sit in each bucket, plus what is left to sort."""
         out = {bucket: _count_jpgs(self.root / bucket) for bucket in self.buckets}
+        out.update({bucket: _count_jpgs(self.root / bucket) for bucket in self.review_buckets})
         out["unsorted"] = self._remaining_estimate()
         return out
 
@@ -109,6 +137,8 @@ class Sorter:
         """The folder behind a bucket name from the browser."""
         if bucket == UNSORTED:
             return self.unsorted
+        if bucket in self.review_buckets:
+            return self.root / bucket
         if bucket not in self.buckets:
             raise SortError(
                 f"unknown bucket {bucket!r}; expected one of {', '.join(self.all_buckets)}"
@@ -166,6 +196,20 @@ class Sorter:
             raise SortError(f"no such photo: {name}")
 
         target_dir.mkdir(parents=True, exist_ok=True)
+
+        original = self.unsorted / name
+        if source_bucket in self.review_buckets and target_bucket != UNSORTED and original.is_file():
+            # presort copies rather than moves, so the photo being vouched for
+            # still sits in the queue. File that one and drop the copy, or the
+            # same image would be trained on twice and shown to a human again.
+            target = _free_path(target_dir / name)
+            os.replace(original, target)
+            source.unlink()
+            self._listed_at = 0.0
+            self._forget(name)
+            log.info("accepted %s: %s -> %s", name, source_bucket, target_bucket)
+            return target.name
+
         target = _free_path(target_dir / name)
         os.replace(source, target)          # same filesystem: an atomic rename
         if UNSORTED in (source_bucket, target_bucket):

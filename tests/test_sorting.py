@@ -313,3 +313,75 @@ def test_a_bad_move_over_http_is_a_400(server, collected):
             post(f"{server}/sort/move", payload)
         assert caught.value.code == 400
     assert (collected / "unsorted" / name).is_file()
+
+
+# --------------------------------------------------------------------------- #
+# checking the classifier's proposals
+#
+# `catbowl presort` copies each unsorted photo into proposed/<its guess>/. The
+# browser treats those folders as buckets so the work can be checked as a grid
+# of thumbnails, and accepting one files the original out of the queue.
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def proposed(sorter, collected):
+    """The classifier guessed "K" for the first two photos, and was unsure of one."""
+    guesses = {"K": sorter.pending()[:2], "unsure": sorter.pending()[2:3]}
+    for bucket, names in guesses.items():
+        directory = collected / "proposed" / bucket
+        directory.mkdir(parents=True)
+        for name in names:
+            (directory / name).write_bytes((collected / "unsorted" / name).read_bytes())
+    return guesses
+
+
+def test_proposal_folders_show_up_as_buckets(sorter, proposed):
+    assert sorter.review_buckets == ["proposed/K", "proposed/unsure"]
+    assert "proposed/K" in sorter.all_buckets
+    assert sorter.counts()["proposed/K"] == 2
+
+
+def test_a_proposal_folder_appearing_later_needs_no_restart(sorter, collected):
+    assert sorter.review_buckets == []
+    (collected / "proposed" / "F").mkdir(parents=True)
+    assert sorter.review_buckets == ["proposed/F"]
+
+
+def test_proposals_are_browsable(sorter, proposed):
+    names, total = sorter.listing("proposed/K")
+    assert total == 2
+    assert set(names) == set(proposed["K"])
+
+
+def test_accepting_a_proposal_files_the_original_and_drops_the_copy(sorter, collected, proposed):
+    """The copy is not the photo that matters: the queue holds the original."""
+    name = proposed["K"][0]
+    sorter.move(name, "proposed/K", "K")
+
+    assert (collected / "K" / name).is_file()
+    assert not (collected / "unsorted" / name).exists(), "the original must leave the queue"
+    assert not (collected / "proposed" / "K" / name).exists(), "the copy is spent"
+    assert name not in sorter.pending(refresh=True)
+    assert sorter.counts()["K"] == 1, "one photo filed, not two"
+
+
+def test_correcting_a_proposal_files_it_under_the_right_cat(sorter, collected, proposed):
+    name = proposed["K"][0]
+    sorter.move(name, "proposed/K", "F")      # the machine was wrong
+    assert (collected / "F" / name).is_file()
+    assert not (collected / "K" / name).exists()
+
+
+def test_a_proposal_whose_original_was_moved_is_filed_itself(sorter, collected, proposed):
+    """`presort --move` leaves no original, so the proposal is the only copy."""
+    name = proposed["K"][0]
+    (collected / "unsorted" / name).unlink()
+    sorter.move(name, "proposed/K", "K")
+    assert (collected / "K" / name).is_file()
+
+
+def test_a_bucket_outside_the_known_list_is_still_refused(sorter, proposed):
+    with pytest.raises(SortError):
+        sorter.dir_for("proposed/../../etc")
+    with pytest.raises(SortError):
+        sorter.dir_for("proposed/nope")

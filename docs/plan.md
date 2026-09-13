@@ -61,8 +61,10 @@ second cat arriving is noticed within about two seconds rather than instantly.
    with anything under the threshold going to `proposed/unsure/`. This doubles
    as the first real test of the model: a human checks the proposals, and how
    many need correcting is the score.
-3. **Move the verified proposals** into `data/collected/J|K|F/` and **retrain**
-   on the larger set.
+3. **Check the proposals** on `/browse`, which lists `proposed/*` as tabs beside
+   the real buckets. Filing a photo from there moves the *original* out of the
+   queue and drops the copy, so accepting the machine's work is one click and
+   nothing gets sorted or trained on twice. Then **retrain** on the larger set.
 4. **Switch the bowl over to recognition.** Drop `--no-model` from the service so
    a lid only lifts for a confirmed cat. This is the point of the whole rig, and
    it is the step that needs a model good enough to trust.

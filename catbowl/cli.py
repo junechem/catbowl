@@ -308,8 +308,8 @@ def cmd_presort(args) -> int:
     for bucket in sorted(counts, key=lambda b: (b == "unsure", b)):
         print(f"  {bucket:<10} {counts[bucket]:5d}  ({counts[bucket] / total:.0%})")
     print(f"\nconfidences in {manifest}")
-    print(f"look through {out_root} and move what is right into "
-          f"{Path(cfg.capture.dir)}/<label>/, then retrain.")
+    print("check them at http://<pi>:8080/browse - the proposed/* tabs. Filing one "
+          "from there moves the original out of the queue, so nothing is sorted twice.")
     return 0
 
 

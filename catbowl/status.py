@@ -25,7 +25,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from .sorting import PAGE_SIZE, SortError
+from .sorting import PAGE_SIZE, UNSORTED, SortError
 
 log = logging.getLogger(__name__)
 
@@ -233,12 +233,12 @@ BROWSE_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content=
 <div class=pager id=pager></div>
 <div id=sheet><div class=who id=who></div><div class=keys id=keys></div></div>
 <script>
-let buckets = [], counts = {}, bucket = 'unsorted', offset = 0, limit = 40,
+let buckets = [], targets = [], counts = {}, bucket = 'unsorted', offset = 0, limit = 40,
     total = 0, page = [], picked = null, busy = false;
 
 async function load(){
  const r = await (await fetch(`/sort/browse.json?bucket=${bucket}&offset=${offset}`)).json();
- buckets = r.buckets; page = r.names; total = r.total; offset = r.offset;
+ buckets = r.buckets; targets = r.targets; page = r.names; total = r.total; offset = r.offset;
  limit = r.limit; picked = null;
  draw();
 }
@@ -259,7 +259,7 @@ function draw(){
   : `<span>${total} photo${total===1?'':'s'}</span>`;
  sheet.className = picked ? 'show' : '';
  who.textContent = picked || '';
- keys.innerHTML = buckets.filter(b => b !== bucket).map(b =>
+ keys.innerHTML = targets.filter(b => b !== bucket).map(b =>
    `<button onclick="move('${b}')">${b}</button>`).join('') +
    `<button class=minor onclick="tap(null)">close</button>`;
 }
@@ -400,8 +400,11 @@ def _handler_for(app):
             except ValueError:
                 self._send(b"offset must be a number", "text/plain", 400)
                 return
-            self._json({"bucket": bucket, "buckets": sorter.all_buckets, "names": names,
-                        "total": total, "offset": offset, "limit": PAGE_SIZE})
+            self._json({"bucket": bucket, "buckets": sorter.all_buckets,
+                        # proposed/* is browsable but not a destination: photos
+                        # leave it for a bucket a person has vouched for.
+                        "targets": [UNSORTED, *sorter.buckets],
+                        "names": names, "total": total, "offset": offset, "limit": PAGE_SIZE})
 
         def _move(self) -> None:
             sorter = self._sorter()
