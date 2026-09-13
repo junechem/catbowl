@@ -20,6 +20,7 @@ from typing import Callable
 from .actuators import Actuator
 from .config import BowlConfig
 from .events import Event
+from .rations import Ledger
 from .recognizer import VoteTracker
 
 log = logging.getLogger(__name__)
@@ -52,11 +53,18 @@ class BowlController:
         self.on_event = on_event or (lambda event: None)
         self.votes = VoteTracker(vote_window, votes_required)
 
+        self.ledger = Ledger(cfg.rations)
+
         self.state = BowlState.CLOSED
         self.last_seen = 0.0
         self.last_decision: str | None = None
         self.last_confidence = 0.0
-        self._owner_since: float | None = None
+        # When each cat this bowl feeds was first seen in the current approach.
+        self._seen_since: dict[str, float] = {}
+        # The cat the lid is currently open for, and when its meal was last
+        # charged to its allowance.
+        self._feeding: str | None = None
+        self._charged_at = 0.0
         self._intruder_since: float | None = None
         self._opened_at = 0.0
         self._cooldown_until = 0.0
@@ -89,12 +97,15 @@ class BowlController:
                 self.votes.update(label)
                 self.last_confidence = confidence
             # The confirmation timer runs alongside the vote window rather than
-            # after it, so the two delays overlap instead of stacking.
-            if label == self.cat and self._owner_since is None:
-                self._owner_since = now
+            # after it, so the two delays overlap instead of stacking. One
+            # timer per cat the bowl feeds: which of them is at the bowl is not
+            # settled yet, and whichever it turns out to be should not have to
+            # start its clock again.
+            if label in self.cfg.cats and label not in self._seen_since:
+                self._seen_since[label] = now
         elif now - self.last_seen > VOTE_DECAY_S:
             self.votes.clear()
-            self._owner_since = None
+            self._seen_since.clear()
 
         self.last_decision = self.votes.decision()
 
@@ -153,9 +164,9 @@ class BowlController:
             self.state = BowlState.COOLDOWN
             self._cooldown_until = now + self.cfg.policy.cooldown_s
             self.votes.clear()
-            self._owner_since = None
+            self._seen_since.clear()
 
-        self._emit("manual", cat=self.cfg.cat, detail={"lid": mode or "auto"})
+        self._emit("manual", cat=self._feeding or self.cfg.cat, detail={"lid": mode or "auto"})
 
     @property
     def manual(self) -> str | None:
@@ -171,7 +182,13 @@ class BowlController:
         now = self.clock()
         return {
             "bowl": self.cfg.id,
-            "cat": self.cfg.cat,
+            # `cat` is who the bowl is open for when it is open, and the list
+            # of who it serves otherwise - the status page shows one name per
+            # bowl, and while a lid is up that name should be the cat eating.
+            "cat": self._feeding or ", ".join(self.cfg.cats),
+            "cats": list(self.cfg.cats),
+            "feeding": self._feeding,
+            "rations": self.ledger.status(self.cfg.cats, now),
             "state": self.state.value,
             "manual": self._manual,
             "lid": round(self.actuator.position, 2),
@@ -189,33 +206,69 @@ class BowlController:
         if now >= self._cooldown_until:
             self.state = BowlState.CLOSED
             self.votes.clear()
-            self._owner_since = None
+            self._seen_since.clear()
+
+    def _candidate(self, now: float) -> str | None:
+        """The cat this bowl would open for right now, if any.
+
+        Opening asks less than every other transition: policy.open_votes
+        sightings, not a consensus. See PolicyConfig.open_votes for why. A cat
+        must still be the best represented in the window - one frame of J does
+        not open the bowl while K is standing in front of it - and it must have
+        allowance left.
+        """
+        seen = [cat for cat in self.cfg.cats if cat in self._seen_since]
+        if not seen:
+            return None
+        # Most-voted first, so the cat actually at the bowl is considered
+        # before one glimpsed behind it.
+        seen.sort(key=lambda cat: (self.votes.count(cat), -self._seen_since[cat]), reverse=True)
+        for cat in seen:
+            if (self.votes.count(cat) >= self.cfg.policy.open_votes
+                    and self.votes.leader(cat)
+                    and now - self._seen_since[cat] >= self.cfg.policy.open_confirm_s):
+                return cat
+        return None
 
     def _tick_closed(self, now: float, present: bool) -> None:
         winner = self.last_decision
-        # Opening asks less than every other transition: policy.open_votes
-        # sightings of the owner, not a consensus. See PolicyConfig.open_votes
-        # for why. The owner must still not be outvoted by another cat - one
-        # frame of J does not open J's bowl while K is standing in front of it.
-        owner_votes = self.votes.count(self.cat)
-        if (present and self._owner_since is not None
-                and owner_votes >= self.cfg.policy.open_votes
-                and self.votes.leader(self.cat)):
-            if now - self._owner_since >= self.cfg.policy.open_confirm_s:
-                self._open(now)
-            return
+        if present:
+            candidate = self._candidate(now)
+            if candidate is not None and self.ledger.allows(candidate, now):
+                self._open(now, candidate)
+                return
+            if candidate is not None:
+                # Recognised, allowed here, but out of allowance for now.
+                self._deny(now, candidate, "out of ration")
+                return
 
-        if winner and winner != self.cat and present:
-            last = self._denied_at.get(winner, 0.0)
-            if now - last >= DENY_REPEAT_S:
-                self._denied_at[winner] = now
-                self.stats["denials"] += 1
-                self._emit("denied", cat=winner, detail={"owner": self.cat})
+        if winner and winner not in self.cfg.cats and present:
+            self._deny(now, winner, "not this bowl's cat")
+
+    def _deny(self, now: float, cat: str, reason: str) -> None:
+        """Log a refusal, at most once every DENY_REPEAT_S per cat.
+
+        A cat that settles down in front of a bowl it cannot open would
+        otherwise fill the log with one line per frame.
+        """
+        last = self._denied_at.get(cat, 0.0)
+        if now - last < DENY_REPEAT_S:
+            return
+        self._denied_at[cat] = now
+        self.stats["denials"] += 1
+        detail = {"reason": reason}
+        refill = self.ledger.refills_at(cat, now)
+        if refill is not None:
+            detail["retry_in_s"] = round(refill - now, 1)
+        self._emit("denied", cat=cat, detail=detail)
 
     def _tick_open(self, now: float, present: bool) -> None:
         winner = self.last_decision
+        self._charge(now)
 
-        if self.cfg.policy.close_on_intruder and present and winner and winner != self.cat:
+        if self.cfg.policy.close_on_intruder and present and winner and winner != self._feeding:
+            # Any cat but the one being fed, including another this bowl
+            # serves: they get their own turn, with their own allowance.
             if self._intruder_since is None:
                 self._intruder_since = now
             if now - self._intruder_since >= self.cfg.policy.intruder_grace_s:
@@ -224,6 +277,10 @@ class BowlController:
         else:
             self._intruder_since = None
 
+        if self._feeding and not self.ledger.allows(self._feeding, now):
+            self._close(now, "ration")
+            return
+
         if not present and now - self.last_seen >= self.cfg.policy.close_delay_s:
             self._close(now, "left")
             return
@@ -231,25 +288,47 @@ class BowlController:
         if self.cfg.policy.max_open_s and now - self._opened_at >= self.cfg.policy.max_open_s:
             self._close(now, "max_open_s")
 
+    def _charge(self, now: float) -> None:
+        """Bill the open lid to whoever it is open for, up to this moment.
+
+        Charged as the meal happens rather than at the end: a cat that never
+        leaves would otherwise never be billed, and an allowance that expires
+        in small pieces comes back smoothly an hour later.
+        """
+        if self._feeding is None:
+            return
+        self.ledger.spend(self._feeding, now, max(0.0, now - self._charged_at))
+        self._charged_at = now
+
     # -- transitions -------------------------------------------------------- #
 
-    def _open(self, now: float) -> None:
+    def _open(self, now: float, cat: str) -> None:
         self.state = BowlState.OPEN
         self._opened_at = now
         self._intruder_since = None
-        self._owner_since = None
+        self._seen_since.clear()
+        self._feeding = cat
+        self._charged_at = now
         self.stats["opens"] += 1
-        self._emit("opened", cat=self.cat, detail={"confidence": round(self.last_confidence, 3)})
+        detail = {"confidence": round(self.last_confidence, 3)}
+        remaining = self.ledger.remaining(cat, now)
+        if self.ledger.limited(cat):
+            detail["ration_left_s"] = round(remaining, 1)
+        self._emit("opened", cat=cat, detail=detail)
         self.actuator.open()
 
     def _close(self, now: float, reason: str, extra: dict | None = None) -> None:
+        self._charge(now)
+        fed = self._feeding
         duration = round(now - self._opened_at, 1)
         self.stats["seconds_open"] = round(self.stats["seconds_open"] + duration, 1)
+        self._feeding = None
         self.state = BowlState.COOLDOWN
         self._cooldown_until = now + self.cfg.policy.cooldown_s
         self._intruder_since = None
         self._send_close(now)
-        self._emit("closed", cat=self.cat, detail={"reason": reason, "duration_s": duration, **(extra or {})})
+        self._emit("closed", cat=fed or self.cfg.cat,
+                   detail={"reason": reason, "duration_s": duration, **(extra or {})})
 
     def _send_close(self, now: float) -> None:
         self._closed_sent_at = now

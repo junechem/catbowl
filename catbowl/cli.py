@@ -501,7 +501,10 @@ def cmd_doctor(args) -> int:
                 bundle = ClassifierBundle.load(model_path)
                 check("classifier loads", True,
                       f"labels: {', '.join(bundle.labels)}, threshold {bundle.min_confidence:.2f}")
-                missing = [b.cat for b in cfg.bowls if b.cat not in bundle.labels]
+                # Disabled bowls are placeholders for hardware that does not
+                # exist yet; their cat names mean nothing until they are built.
+                missing = sorted({cat for bowl in cfg.bowls if bowl.enabled
+                                  for cat in bowl.cats if cat not in bundle.labels})
                 check("every bowl's cat is a known label", not missing,
                       f"missing from the model: {', '.join(missing)}" if missing else "")
                 check("backbone matches config", bundle.embedder.backend == cfg.recognition.backend,

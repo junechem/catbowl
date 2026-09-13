@@ -50,7 +50,8 @@ class BowlWorker(threading.Thread):
         self.period = 1.0 / max(loop_fps, 0.1)
         self.snapshot_dir = snapshot_dir
         self.capture = capture or CaptureConfig()
-        self._capture_dir = Path(self.capture.dir) / "unsorted" if self.capture.dir else None
+        self._capture_root = Path(self.capture.dir) if self.capture.dir else None
+        self._capture_dir = self._capture_root / "unsorted" if self._capture_root else None
         self._last_capture = 0.0
         # Seeded from what is already on disk so max_images caps the folder
         # rather than the run: otherwise a service that restarts nightly fills
@@ -109,12 +110,14 @@ class BowlWorker(threading.Thread):
 
         crop = detection.crop(image, pad_frac=0.15)
         self.latest_crop = crop
-        self._maybe_capture(image, crop)
         if detection.crowd > 1:
             # Two cats at one bowl: whichever one the crop shows, the other is
             # standing right there, so an open lid feeds the wrong cat. Answered
             # before the classifier runs - the question "which cat is this" has
             # no useful answer here, and it is the one question it can answer.
+            # Banked unsorted: a photo of two cats is not a photo of either of
+            # them, and no proposal tab is the right home for it.
+            self._maybe_capture(image, crop)
             return True, CROWD, 1.0
         if self.recognizer is None:
             # No classifier: identity is stubbed out and anything the detector
@@ -122,27 +125,65 @@ class BowlWorker(threading.Thread):
             # vote window, confirmation timer, slew, close delay - still runs,
             # so this exercises the whole rig before a model exists. It will
             # also open the lid for the wrong cat, a hand, or a passing dog.
+            self._maybe_capture(image, crop)
             return True, self.cfg.cat, 1.0
 
         prediction = self.recognizer.predict(crop)
         self.inferences += 1
+        self._maybe_capture(image, crop, self._verdict_for(prediction))
         return True, prediction.label, prediction.confidence
 
-    def _count_captures(self) -> int:
-        if self._capture_dir is None or not self._capture_dir.is_dir():
-            return 0
-        return sum(1 for _ in self._capture_dir.glob("*.jpg"))
+    def _verdict_for(self, prediction) -> str:
+        """The proposal folder a prediction belongs in."""
+        from .recognizer import OTHER
+        from .sorting import DISCARD
 
-    def _maybe_capture(self, frame: np.ndarray, crop: np.ndarray) -> None:
+        if prediction.raw_label == OTHER and prediction.confidence >= self.recognizer.min_confidence:
+            return DISCARD           # "none of the cats", filed where those live
+        return prediction.label if prediction.is_known else "unsure"
+
+    def _count_captures(self) -> int:
+        """Photos this rig has banked and nobody has filed yet.
+
+        The queue and the machine's proposals both count: max_images is there
+        to keep the SD card alive, and an unchecked proposal takes up exactly
+        as much of it as an unsorted photo.
+        """
+        if self._capture_root is None:
+            return 0
+        total = 0
+        for directory in (self._capture_dir, *sorted((self._capture_root / "proposed").glob("*"))):
+            if directory is not None and directory.is_dir():
+                total += sum(1 for _ in directory.glob("*.jpg"))
+        return total
+
+    def _capture_into(self, verdict: str | None) -> Path | None:
+        """Where this photo should be filed.
+
+        With no classifier, or none that was sure, the photo joins the queue a
+        human works through. With one, it goes to `proposed/<its guess>` - the
+        same place `catbowl presort` writes, browsable in the same tabs, and
+        accepted or corrected with the same click. The rig keeps its opinions
+        out of the folders a person has vouched for, which is the only rule
+        that matters here: a wrong guess filed as fact is a wrong label, and
+        the next model learns it.
+        """
+        if self._capture_root is None:
+            return None
+        if verdict is None:
+            return self._capture_dir
+        return self._capture_root / "proposed" / verdict
+
+    def _maybe_capture(self, frame: np.ndarray, crop: np.ndarray,
+                       verdict: str | None = None) -> None:
         """Bank a photo of whatever is at the bowl, for a later training run.
 
         Runs on every detection rather than on state changes, because the point
         is a varied dataset: a cat mid-turn or head-down is exactly the pose the
         classifier gets wrong, and those frames never coincide with a lid moving.
-        The images go in one unsorted folder - which cat this is, is the question
-        the dataset exists to answer, so the rig must not pretend to know it.
         """
-        if self._capture_dir is None:
+        directory = self._capture_into(verdict)
+        if directory is None:
             return
         now = time.monotonic()
         if now - self._last_capture < self.capture.interval_s:
@@ -153,11 +194,11 @@ class BowlWorker(threading.Thread):
         try:
             import cv2
 
-            self._capture_dir.mkdir(parents=True, exist_ok=True)
+            directory.mkdir(parents=True, exist_ok=True)
             stamp = f"{datetime.now():%Y%m%d-%H%M%S-%f}"[:-3]
-            cv2.imwrite(str(self._capture_dir / f"{self.cfg.id}-{stamp}.jpg"), crop)
+            cv2.imwrite(str(directory / f"{self.cfg.id}-{stamp}.jpg"), crop)
             if self.capture.save_frame:
-                cv2.imwrite(str(self._capture_dir / f"{self.cfg.id}-{stamp}-frame.jpg"), frame)
+                cv2.imwrite(str(directory / f"{self.cfg.id}-{stamp}-frame.jpg"), frame)
             self._captured += 1
             if self.capture.max_images and self._captured == self.capture.max_images:
                 log.info("%s: capture folder has reached max_images (%d); stopping",

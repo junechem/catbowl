@@ -10,22 +10,42 @@ rather than taped. The camera is a Logitech Brio 100 on USB. The status page
 serves the live view, the sorting queue and the browser at
 `http://rjwpi.local:8080/`.
 
-The service runs `--no-model`, which is the important caveat: **there is no
-trained classifier yet.** In that mode anything the cat detector finds opens the
-lid - any cat, a hand, a passing dog. What exists is the training set, banked by
-the rig itself and sorted by hand through `/sort`:
+A classifier now exists, trained on the Pi from the photos the rig banked and a
+human sorted: **J 925, K 722, F 710, and 1232 discards**. The discards are
+learnt as a negative class (`_other`, "none of the cats") rather than as a
+fourth cat, so a lid can never open for one.
 
-| bucket | photos |
-| --- | --- |
-| J | 666 |
-| K | 579 |
-| F | 551 |
-| M (more than one cat) | 7 |
-| discard | 1059 |
-| unsorted | 702 |
+    raw accuracy 90.4%   |   one cat called another: 23 of 3589 (0.6%)
+
+The overall figure is lower than the cats-only model's 96.5%, and better: almost
+all of the new error is a cat confused with junk, the least harmful mistake
+available, while the error that actually matters - the wrong cat fed - fell from
+1.7% to 0.6%. Threshold `min_confidence: 0.85`.
 
 Everything lives on the Pi under `data/collected/`, which is gitignored: the
-photos exist in exactly one place and no git operation can touch them.
+photos exist in exactly one place and no git operation can touch them. The rig
+files each new photo it takes into `proposed/<its guess>`, so the review queue
+builds itself and every day's photos are a fresh test of the model.
+
+## How a lid decides to open
+
+Opening asks for **one confident sighting** (`policy.open_votes: 1`), not a
+consensus. A cat walking up has no history to consult, and every frame it waits
+is a frame it spends at a shut bowl. The protection a vote window offers here is
+thinner than it looks: consecutive frames of the same cat in the same light are
+not independent samples, so a hard frame errs the same way several times over
+and the window agrees with itself. A frame the model is genuinely unsure of now
+lands in `_other`, which can never win a vote at all.
+
+Everything after the open - intruder, crowd, close - still needs
+`votes_required` of the last `vote_window` frames, because by then there is
+context to consult. A wrong open costs the wrong cat a mouthful before the
+intruder rule shuts the lid; a slow open costs the right cat its meal every
+time.
+
+Two guards remain on the open: a cat cannot open the lid while another cat is
+better represented in the window, and a sighting that has scrolled out of the
+window is not a sighting.
 
 ## The two safety questions, answered
 
@@ -50,31 +70,47 @@ Two limits worth knowing. The count comes from `ssdlite`, so it needs
 between confirmations (`confirm_every_s`, 2 s) the last count stands, so a
 second cat arriving is noticed within about two seconds rather than instantly.
 
+## How the one bowl serves three cats
+
+There is one bowl and there are three cats, and there will be one bowl until
+there is time to build more. So the bowl feeds all three, on different terms:
+
+| cat | rule |
+| --- | --- |
+| K | opens whenever she walks up, for as long as she stays |
+| J | two minutes of open lid per rolling hour |
+| F | two minutes of open lid per rolling hour |
+
+The allowance is a **budget, not one meal an hour**. A cat startled away after
+ten seconds keeps the rest of its two minutes and can come back for it. Time is
+charged while the lid is open - including the `close_delay_s` it stays up behind
+a cat that has already wandered off - and charged as the meal happens, so a cat
+that never leaves is still billed. An hour after each mouthful, that mouthful's
+worth of allowance comes back.
+
+Running out closes the lid mid-meal (`reason: ration`) and refuses the next
+approach with a `denied` event saying how long until it can eat again. A cat
+arriving while another is eating still ends the meal - it gets its own turn on
+its own allowance, rather than sharing the open lid.
+
+Allowances live in memory. A restart hands every cat a full two minutes again,
+which errs towards feeding a cat twice rather than starving one that has eaten
+nothing.
+
 ## Next steps, in order
 
-1. **Train the first classifier** on the 1796 hand-sorted photos.
-   `catbowl train --data data/collected --labels J K F`. The `--labels` flag is
-   what keeps `discard`, `unsorted` and `proposed` from becoming classes of
-   their own. Note the suggested threshold it prints.
-2. **Presort the 702 unsorted photos with it.** `catbowl presort` files copies
-   into `data/collected/proposed/<label>/`, never into the hand-sorted buckets,
-   with anything under the threshold going to `proposed/unsure/`. This doubles
-   as the first real test of the model: a human checks the proposals, and how
-   many need correcting is the score.
-   Photos are judged a visit at a time, not one by one: captures two seconds
-   apart are the same cat, so a blurred frame in the middle of a run inherits
-   the name its neighbours were sure of. A visit holding confident frames for
-   two different cats is refused and left per-photo.
-3. **Check the proposals** on `/browse`, which lists `proposed/*` as tabs beside
-   the real buckets. Filing a photo from there moves the *original* out of the
-   queue and drops the copy, so accepting the machine's work is one click and
-   nothing gets sorted or trained on twice. Then **retrain** on the larger set.
-4. **Switch the bowl over to recognition.** Drop `--no-model` from the service so
-   a lid only lifts for a confirmed cat. This is the point of the whole rig, and
-   it is the step that needs a model good enough to trust.
-5. **Rename the cats.** The config still says mochi/pepper/biscuit while the
-   photos say J/K/F. The `cat:` field of each bowl has to match the classifier's
-   labels exactly, so this has to happen together with step 4.
+1. **Deploy and switch to recognition.** Drop `--no-model` from the service so a
+   lid only lifts for a confirmed cat, with `min_confidence: 0.85`.
+2. **Watch the first day.** The numbers that matter are wrong opens (the wrong
+   cat fed) and refusals of the right cat. `/` shows each cat's remaining
+   allowance; the event log shows every open, close and denial with its reason.
+3. **Keep checking the proposals.** The running rig now files each photo it
+   takes into `proposed/<its guess>`, so the review queue builds itself and
+   every session's worth of photos is a fresh test of the model.
+4. **Retrain** as the checked piles grow, and again whenever the cats' coats
+   change with the seasons.
+5. **Build bowls 2 and 3**, and give J and F their own, at which point their
+   rations can go.
 
 ## Time, and what uses it
 
@@ -82,15 +118,8 @@ Every listing on `/browse` is already in time order - the capture filename
 carries the timestamp, so a visit's frames sit together in the grid whichever
 folder they are in.
 
-`presort` uses time as evidence, as above. The **running rig uses very little**.
-Opening asks for `policy.open_votes` sightings - one, by default - because a cat
-walking up has no history to consult and every frame it waits is a frame it
-stands at a shut bowl. Everything after that (intruder, close, crowd) asks for
-`votes_required` of the last `vote_window` frames, which is where the caution
-belongs: by then there *is* context, and a wrong open costs the wrong cat a
-mouthful while a slow open costs the right cat its meal.
-
-Beyond that the rig carries no memory of who was just here. A visit-level prior
+`presort` uses time as evidence, as above, and the lid's rules use a second of
+it (see *How a lid decides to open*). Beyond that the rig carries no memory of who was just here. A visit-level prior
 with hysteresis - harder to switch identity mid-meal than to keep it - is the
 obvious next refinement once the model is trusted.
 

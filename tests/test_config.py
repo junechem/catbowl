@@ -43,7 +43,12 @@ def test_bowl_defaults_are_merged_and_overridden():
 def test_shipped_config_is_valid():
     app = load_config("config/bowls.yaml")
     assert len(app.bowls) == 3
-    assert len(set(app.cats)) == 3
+    assert len(app.cats) == len(set(app.cats)), "no cat may be on two bowls"
+
+    live = [bowl for bowl in app.bowls if bowl.enabled]
+    assert len(live) == 1, "one bowl is built; the others are placeholders"
+    assert live[0].cats == ["K", "J", "F"], "the one bowl feeds all three cats"
+    assert set(live[0].rations) == {"J", "F"}, "K eats without limit, J and F do not"
 
 
 @pytest.mark.parametrize(

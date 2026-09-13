@@ -50,7 +50,7 @@ def trained(tmp_path_factory):
     return workdir, model_path
 
 
-def make_app(workdir: Path, model_path: Path, **overrides) -> FeederApp:
+def make_app(workdir: Path, model_path: Path, no_model: bool = False, **overrides) -> FeederApp:
     cfg = build_config({
         "recognition": {"backend": "mock", "classifier": str(model_path),
                         "min_confidence": 0.6, "vote_window": 4, "votes_required": 3},
@@ -69,7 +69,7 @@ def make_app(workdir: Path, model_path: Path, **overrides) -> FeederApp:
         ],
         **overrides,
     })
-    return FeederApp(cfg)
+    return FeederApp(cfg, no_model=no_model)
 
 
 def run_for(app: FeederApp, seconds: float) -> None:
@@ -152,6 +152,7 @@ def test_no_model_treats_any_detection_as_the_bowls_own_cat():
     worker.recognizer = None
     worker.latest_crop = None
     worker._capture_dir = None                   # no dataset collection here
+    worker._capture_root = None
     worker.detector = MotionDetector(DetectorConfig(warmup_frames=1, min_area_frac=0.001))
 
     # Learn an empty scene, then put something in it.
@@ -176,6 +177,7 @@ def test_a_recognizer_free_worker_reports_nothing_when_nothing_moves():
     worker.recognizer = None
     worker.latest_crop = None
     worker._capture_dir = None                   # no dataset collection here
+    worker._capture_root = None
     worker.detector = MotionDetector(DetectorConfig(warmup_frames=1, min_area_frac=0.001))
 
     blank = np.zeros((120, 160, 3), dtype=np.uint8)
@@ -187,8 +189,9 @@ def test_a_recognizer_free_worker_reports_nothing_when_nothing_moves():
 def test_detections_are_banked_for_later_labelling(trained):
     """The dataset builds itself while the rig runs.
 
-    Images land unsorted: at this point the rig has no trustworthy idea which
-    cat it is looking at, and folders named by a guess would be worse than none.
+    With a classifier loaded the photos land in `proposed/<its guess>`, the
+    same folders `catbowl presort` writes and the same tabs a human checks
+    them in. Never in the folders a person has vouched for.
     """
     workdir, model_path = trained
     collected = workdir / "collected"
@@ -196,8 +199,11 @@ def test_detections_are_banked_for_later_labelling(trained):
                    capture={"dir": str(collected), "interval_s": 0.2})
     run_for(app, 5.0)
 
-    images = list((collected / "unsorted").glob("*.jpg"))
+    images = list((collected / "proposed").glob("*/*.jpg"))
     assert images, "nothing was captured"
+    assert not list(collected.glob("*.jpg")), "nothing may land outside a bucket"
+    for cat in (w.cfg.cat for w in app.workers):
+        assert not (collected / cat).exists(), "the rig must not file into a human's folder"
     assert {p.name.split("-")[0] for p in images} == {w.cfg.id for w in app.workers}
     assert sum(w.status()["captured"] for w in app.workers) == len(images)
 
@@ -209,7 +215,7 @@ def test_capture_stops_at_max_images(trained):
                    capture={"dir": str(collected), "interval_s": 0.05, "max_images": 2})
     run_for(app, 4.0)
 
-    images = list((collected / "unsorted").glob("*.jpg"))
+    images = list((collected / "proposed").glob("*/*.jpg"))
     assert 0 < len(images) <= 2 * len(app.workers)
 
 
@@ -232,6 +238,7 @@ def _crowd_worker(recognizer, crowd):
     worker.recognizer = recognizer
     worker.latest_crop = None
     worker._capture_dir = None
+    worker._capture_root = None
     worker.inferences = 0
     worker.detector = Always()
     return worker
@@ -271,3 +278,15 @@ def test_two_cats_are_refused_even_with_no_classifier_at_all():
 def test_one_cat_still_reaches_the_classifier():
     worker = _crowd_worker(Sure(), crowd=1)
     assert worker._process(np.zeros((120, 160, 3), dtype=np.uint8))[1] == "mochi"
+
+
+def test_without_a_classifier_captures_still_go_to_the_queue(trained):
+    """--no-model has no opinion to file under, so a human gets all of them."""
+    workdir, model_path = trained
+    collected = workdir / "nomodel"
+    app = make_app(workdir, model_path,
+                   capture={"dir": str(collected), "interval_s": 0.2}, no_model=True)
+    run_for(app, 4.0)
+
+    assert list((collected / "unsorted").glob("*.jpg"))
+    assert not (collected / "proposed").exists()

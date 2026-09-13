@@ -123,7 +123,7 @@ def test_wrong_cat_is_denied_and_logged_once(rig):
     denials = [e for e in events if e.kind == "denied"]
     assert len(denials) == 1, "a lingering cat should not spam the log"
     assert denials[0].cat == INTRUDER
-    assert denials[0].detail["owner"] == OWNER
+    assert denials[0].detail["reason"] == "not this bowl's cat"
 
 
 def test_closes_after_the_cat_leaves(rig):

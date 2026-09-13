@@ -9,7 +9,7 @@ recognition:
   input_size: 224
   # Below this confidence a frame counts as "unknown" and no lid moves.
   # `catbowl train` prints a suggested value - start there.
-  min_confidence: 0.75
+  min_confidence: 0.85
   # A lid only moves when votes_required of the last vote_window frames agree.
   # At loop_fps: 5 this means ~0.8s of consistent evidence.
   vote_window: 6
@@ -65,7 +65,7 @@ capture:
   # Buckets offered by the sorting page at http://<pi>:8080/sort. Each is a
   # folder under `dir`. M is "more than one cat": no use for training a
   # single-cat classifier, but kept rather than thrown away.
-  labels: [J, K, F, M]
+  labels: [J, K, F]
 
 # Applied to every bowl, then overridden per bowl below.
 bowl_defaults:
@@ -111,21 +111,35 @@ bowl_defaults:
     reassert_closed_s: 5.0
 
 bowls:
-  # bowl1's lid is a cardboard disc lying flat on the bowl, swung sideways by
-  # one servo taped to the bowl's side. The angles are the ones this servo held
-  # when the lid was built round it, so closed is still where the lid was
-  # fitted; open is a guess. Calibrate: `catbowl calibrate --bowl bowl1`.
+  # One bowl, three cats, until there is hardware for more. The bowl opens for
+  # any of them, but J and F are on an allowance: two minutes of open lid each
+  # per rolling hour, spent across as many visits as they like. K has no entry
+  # in `rations`, so she eats whenever she walks up.
   #
-  # detach_when_idle: a held servo taped to the bowl hunts. Nudge the lid and it
-  # pushes back, the tape flexes, it overshoots, and it buzzes the lid back and
-  # forth without end. A disc turning flat stays where it is left, so the servo
-  # can go limp once it arrives. The price: a limp lid can be pawed open. Mount
-  # the servo rigidly and this can go back to false, which holds the lid shut.
+  # The allowance is a budget rather than one meal an hour on purpose: a cat
+  # startled away after ten seconds keeps the rest and can come back for it.
+  # Time is charged while the lid is open, including the close_delay it stays
+  # up behind a cat that has wandered off.
+  #
+  # bowl1's lid is a cardboard disc lying flat on the bowl, swung sideways by
+  # one servo glued to the bowl's side. Calibrate: `catbowl calibrate --bowl bowl1`.
+  #
+  # detach_when_idle: a held servo on a flexible mount hunts - nudge the lid and
+  # it pushes back, the mount flexes, it overshoots, and it buzzes without end.
+  # A disc turning flat stays where it is left, so the servo can go limp once it
+  # arrives. The price: a limp lid can be pawed open, which reassert_closed_s
+  # covers. Now that the servo is glued rather than taped, this can go back to
+  # false, which holds the lid shut.
   - id: bowl1
-    cat: mochi
+    cats: [K, J, F]
+    rations:
+      J: 120        # seconds of open lid per hour. `J: {seconds: 120, per_s: 3600}` in full
+      F: 120
     camera: {device: 0}
     servo: {channel: 1, closed_deg: 170, open_deg: 85, detach_when_idle: true}
 
+  # Placeholders for bowls that do not exist yet. The names are ignored while
+  # `enabled: false`; give them real cats when the hardware is built.
   - id: bowl2
     cat: pepper
     enabled: false

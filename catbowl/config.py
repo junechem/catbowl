@@ -98,9 +98,39 @@ class PolicyConfig:
 
 
 @dataclass
+class RationConfig:
+    """How much open lid one cat is allowed, and how often.
+
+    A bowl shared by cats with different appetites needs a way to say "this one
+    may graze all day, that one gets two minutes an hour". The allowance is a
+    rolling budget of open-lid seconds, not a single sitting: a cat startled
+    away after ten seconds keeps the rest and can come back for it, which a
+    once-an-hour rule would take from it.
+    """
+
+    seconds: float                 # open-lid seconds allowed per window
+    per_s: float = 3600.0          # length of the rolling window
+
+    def __post_init__(self) -> None:
+        if self.seconds <= 0:
+            raise ConfigError("ration.seconds must be positive")
+        if self.per_s <= 0:
+            raise ConfigError("ration.per_s must be positive")
+        if self.seconds > self.per_s:
+            raise ConfigError("ration.seconds cannot exceed ration.per_s: "
+                              "that is no limit at all, so leave the ration out")
+
+
+@dataclass
 class BowlConfig:
     id: str
-    cat: str
+    # One bowl can serve several cats. `cats` is the list it opens for; `cat`
+    # is the first of them, kept because a single-cat bowl reads better that
+    # way and most of the code only ever needs a name to show.
+    cat: str = ""
+    cats: list[str] = field(default_factory=list)
+    # Per-cat allowances. A cat with no entry here eats without limit.
+    rations: dict[str, RationConfig] = field(default_factory=dict)
     camera: CameraConfig = field(default_factory=CameraConfig)
     # A lid may be driven by more than one servo - a heavy or wide lid usually
     # wants one on each hinge. They are ganged: every servo in this list is
@@ -109,6 +139,21 @@ class BowlConfig:
     servos: list[ServoConfig] = field(default_factory=lambda: [ServoConfig()])
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     enabled: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.cats:
+            self.cats = [self.cat] if self.cat else []
+        if not self.cats:
+            raise ConfigError(f"bowl {self.id!r} must name at least one cat")
+        if not self.cat:
+            self.cat = self.cats[0]
+        if self.cat not in self.cats:
+            self.cats = [self.cat, *self.cats]
+        unknown = set(self.rations) - set(self.cats)
+        if unknown:
+            raise ConfigError(
+                f"bowl {self.id!r}: ration for {', '.join(sorted(unknown))}, "
+                f"who this bowl does not feed (it feeds {', '.join(self.cats)})")
 
     @property
     def servo(self) -> ServoConfig:
@@ -248,7 +293,24 @@ class AppConfig:
 
     @property
     def cats(self) -> list[str]:
-        return [bowl.cat for bowl in self.bowls]
+        """Every cat the rig feeds, across all bowls, without repeats."""
+        return list(dict.fromkeys(cat for bowl in self.bowls for cat in bowl.cats))
+
+
+def _build_rations(data, context: str) -> dict:
+    """`rations: {J: {seconds: 120}}` into RationConfigs, with clear errors."""
+    if not data:
+        return {}
+    if not isinstance(data, dict):
+        raise ConfigError(f"{context} must be a mapping of cat -> ration")
+    out = {}
+    for cat, entry in data.items():
+        # `J: 120` is allowed as shorthand for `J: {seconds: 120}`, because an
+        # allowance per hour is what nearly everyone means.
+        if isinstance(entry, (int, float)):
+            entry = {"seconds": float(entry)}
+        out[str(cat)] = _build(RationConfig, entry, f"{context}.{cat}")
+    return out
 
 
 def _build(cls, data: dict | None, context: str):
@@ -288,13 +350,19 @@ def build_config(raw: dict) -> AppConfig:
             raise ConfigError(f"bowls[{index}] must be a mapping")
         entry = _merge(defaults, entry)
         context = f"bowls[{index}]"
-        for required in ("id", "cat"):
-            if not entry.get(required):
-                raise ConfigError(f"{context} is missing required key '{required}'")
+        if not entry.get("id"):
+            raise ConfigError(f"{context} is missing required key 'id'")
+        if not entry.get("cat") and not entry.get("cats"):
+            raise ConfigError(f"{context} must name a cat: 'cat: K', or 'cats: [J, K, F]'")
+        cats = entry.get("cats") or []
+        if isinstance(cats, str):
+            raise ConfigError(f"{context}.cats must be a list, e.g. [J, K, F]")
         bowls.append(
             BowlConfig(
                 id=str(entry["id"]),
-                cat=str(entry["cat"]),
+                cat=str(entry.get("cat") or ""),
+                cats=[str(cat) for cat in cats],
+                rations=_build_rations(entry.get("rations"), f"{context}.rations"),
                 enabled=bool(entry.get("enabled", True)),
                 camera=_build(CameraConfig, entry.get("camera"), f"{context}.camera"),
                 servos=_build_servos(entry, context),
@@ -364,9 +432,10 @@ def _validate(app: AppConfig) -> None:
         if bowl.id in seen_ids:
             raise ConfigError(f"duplicate bowl id {bowl.id!r}")
         seen_ids.add(bowl.id)
-        if bowl.cat in seen_cats:
-            raise ConfigError(f"cat {bowl.cat!r} is assigned to more than one bowl")
-        seen_cats.add(bowl.cat)
+        for cat in bowl.cats:
+            if cat in seen_cats:
+                raise ConfigError(f"cat {cat!r} is assigned to more than one bowl")
+            seen_cats.add(cat)
 
         # Every servo on the lid gets checked, not just the first, so a typo in
         # the second hinge fails at start-up instead of at 3am.
