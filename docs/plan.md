@@ -13,8 +13,8 @@ serves the live view, the sorting queue and the browser at
 `http://rjwpi.local:8080/`.
 
 A classifier now exists, trained from the photos the rig banked and a human
-sorted: **J 1074, K 798, F 854, and 1427 discards** (4153 photos, retrained
-2026-09-13 on the desktop rather than the Pi - forty seconds instead of seven
+sorted: **J 1074, K 798, F 854, and 1427 discards** (4153 photos, of which only 599
+carry the fixed wide crop, retrained 2026-09-13 on the desktop rather than the Pi - forty seconds instead of seven
 minutes, and the Pi only receives the finished `models/classifier.joblib`). The
 discards are learnt as a negative class (`_other`, "none of the cats") rather
 than as a fourth cat, so a lid can never open for one.
@@ -142,19 +142,26 @@ cat", which is exactly what the model now believes.
 That is a **labelling feedback loop**, not a shortage of data and not, mainly, a
 confusion between two cats. Three things bear on it:
 
-- **Crops were fixed on 2026-09-09** (commit `38ebc5d`): the detector now
-  remembers ssdlite's whole-animal box instead of cropping to the tuft of fur
-  that moved. Every photo taken before that date has the old, tighter crop, and
-  most of the current training set predates it.
+- **Crops were fixed in commit `38ebc5d`, dated 2026-09-09 - but that is the
+  commit date, not the deploy date.** The Pi's reflog shows its checkout sat on
+  a 2026-09-03 commit until it was pulled forward at **2026-09-12 21:00**, and
+  the photos agree: crop sizes step up sharply between the evening of the 12th
+  and the morning of the 13th (the fraction of tiny crops, under 40k px, falls
+  from ~13% to under 1%). So the well-cropped photos are **599 of 4153, 14% of
+  the set, almost all taken on 2026-09-13** - one day, not a week.
+
+  Per folder, new crops / old: F 144/710, J 174/900, K 80/718,
+  discard 201/1226. Verify this the same way rather than trusting a commit
+  date: `git reflog --date=iso` on the Pi, against crop areas by capture hour.
 - **Judging a visit rather than a frame breaks the loop**, because a visit where
   the feet show in a few frames can name the headless frames beside them. This
   is what `presort` does in batch and what the rig now does live.
-- **Adding a week of well-cropped photos helped, but only a little.** The
-  2026-09-13 retrain added 564 photos and moved F from 54.4% to 59.7% of visits.
-  The plan stands: keep collecting, then *replace* the older F and `discard`
-  photos rather than only adding to them. Roughly 543 of F's 854 photos and 861
-  of the 1427 discards still predate the crop fix, and they are the ones
-  teaching the bias.
+- **Adding well-cropped photos helped, and there are barely any yet.** The
+  2026-09-13 retrain added 564 photos and moved F from 54.4% to 59.7% of
+  visits - and only 144 of F's 854 photos are actually new crops. Five points
+  from a 17% transfusion is a good sign, not a small one. The plan stands:
+  keep collecting, then *replace* the old F and `discard` photos rather than
+  only adding to them.
 
 While waiting, **`proposed/discard` is the tab that needs a human most**. The
 model will keep filing F there, and accepting those proposals unchecked would
@@ -178,9 +185,11 @@ teach the next model the same bias from its own mistakes.
    unfiled - `unsorted/` plus every `proposed/` folder. Hit it and the rig stops
    banking photos silently.
 3. **Replace the old F and discard photos** with the new well-cropped ones -
-   deleting, not just adding. The filename timestamps pick out the
-   pre-2026-09-09 photos: 543 in `F/`, 861 in `discard/`, 595 in `J/`.
-   J losing seven points in the retrain says the old crops hurt it too.
+   deleting, not just adding. The cutoff in the filename timestamps is
+   **2026-09-12 21:00**, not the 9th: that leaves 710 old photos in `F/`, 1226
+   in `discard/`, 900 in `J/` and 718 in `K/`. J losing seven points in the
+   retrain says the old crops hurt it too. There is not yet enough new material
+   to replace them with - this is the week of collecting, starting now.
 4. **Retrain**, then re-run `tools/threshold_report.py` and compare the per-visit
    table above. That table, not `train`'s accuracy, is the measure of progress.
 5. **Build bowls 2 and 3**, and give J and F their own, at which point the
