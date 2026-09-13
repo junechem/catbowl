@@ -207,8 +207,11 @@ BROWSE_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content=
  .tabs button{font:inherit;font-size:.9rem;padding:.4rem .7rem;border-radius:99px;
    border:1px solid #3a4150;background:#252a33;color:#9aa0a6;cursor:pointer}
  .tabs button.on{background:#1e4620;border-color:#2f6b34;color:#8fd694}
- #grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:.4rem}
- #grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;background:#000;
+ #grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:.4rem}
+ /* contain, never cover: these are crops of a cat, and the half a tile would
+    cut off is exactly the half that says which cat it is. Letterboxing against
+    black costs nothing here. */
+ #grid img{width:100%;aspect-ratio:4/3;object-fit:contain;border-radius:6px;background:#000;
    cursor:pointer;border:2px solid transparent}
  #grid img.on{border-color:#8fd694}
  .pager{display:flex;gap:.5rem;justify-content:center;align-items:center;margin:1rem 0;
@@ -221,6 +224,10 @@ BROWSE_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content=
  #sheet.show{display:block}
  #sheet .who{font-size:.75rem;color:#6b7280;font-family:ui-monospace,monospace;
    text-align:center;margin-bottom:.6rem;overflow-wrap:anywhere}
+ /* A tile is small enough that two similar cats look alike. The picked photo
+    is shown whole and large before anything is filed on the strength of it. */
+ #peek{display:block;margin:0 auto .6rem;max-width:min(100%,420px);max-height:38vh;
+   object-fit:contain;border-radius:6px;background:#000}
  #sheet .keys{display:flex;flex-wrap:wrap;gap:.5rem;max-width:520px;margin:0 auto}
  #sheet button{flex:1 1 4rem;font:inherit;font-weight:600;padding:.7rem .4rem;border-radius:8px;
    border:1px solid #3a4150;background:#252a33;color:#e8e6e3;cursor:pointer}
@@ -231,7 +238,7 @@ BROWSE_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content=
 <div class=tabs id=tabs></div>
 <div id=grid></div>
 <div class=pager id=pager></div>
-<div id=sheet><div class=who id=who></div><div class=keys id=keys></div></div>
+<div id=sheet><img id=peek alt="" hidden><div class=who id=who></div><div class=keys id=keys></div></div>
 <script>
 let buckets = [], targets = [], counts = {}, bucket = 'unsorted', offset = 0, limit = 40,
     total = 0, page = [], picked = null, busy = false;
@@ -258,6 +265,8 @@ function draw(){
      <button onclick="hop(1)" ${offset+page.length > last ? 'disabled' : ''}>older</button>`
   : `<span>${total} photo${total===1?'':'s'}</span>`;
  sheet.className = picked ? 'show' : '';
+ peek.hidden = !picked;
+ if (picked) peek.src = `/sort/photo/${picked}?bucket=${bucket}`;
  who.textContent = picked || '';
  // On a proposals tab the photo is still in the queue - it was copied, not
  // moved - so "unsorted" would read as a move to where it already is.
