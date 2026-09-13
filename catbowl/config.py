@@ -72,10 +72,14 @@ class PolicyConfig:
     close_on_intruder: bool = True
     intruder_grace_s: float = 2.0  # a wrong cat must linger this long before we close
     cooldown_s: float = 3.0        # dead time after closing, stops the lid oscillating
+    # A servo that goes limp between moves (detach_when_idle) can be pawed open
+    # while the bowl is shut, and nothing would close it until the next meal.
+    # Re-send "closed" this often while the lid should be down. 0 disables.
+    reassert_closed_s: float = 5.0
 
     def __post_init__(self) -> None:
         for name in ("open_confirm_s", "close_delay_s", "max_open_s",
-                     "intruder_grace_s", "cooldown_s"):
+                     "intruder_grace_s", "cooldown_s", "reassert_closed_s"):
             if getattr(self, name) < 0:
                 raise ConfigError(f"policy.{name} must not be negative")
         if self.max_open_s and self.max_open_s < self.close_delay_s:

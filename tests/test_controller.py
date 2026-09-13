@@ -277,3 +277,61 @@ def test_a_manual_open_still_works_after_the_cap(rig):
 
     controller.set_manual("open")
     assert actuator.is_open
+
+
+# --------------------------------------------------------------------------- #
+# keeping a limp lid shut
+# --------------------------------------------------------------------------- #
+
+def writes(actuator):
+    return len(actuator.angles)
+
+
+def test_a_shut_bowl_resends_closed_so_a_pawed_lid_goes_back(rig):
+    """A limp servo can be pushed open with the bowl shut. Nothing else would
+    notice until the next meal, so "closed" is re-sent on a timer."""
+    controller, actuator, clock, _ = rig
+    before = writes(actuator)
+
+    feed(controller, clock, None, frames=24, dt=0.5, present=False)   # 12 s, empty
+
+    assert writes(actuator) - before == 2, "once at 5 s and once at 10 s"
+    assert actuator.angles[-1] == controller.cfg.servo.closed_deg
+
+
+def test_an_open_lid_is_never_pulled_shut_by_the_reassert(rig):
+    controller, actuator, clock, _ = rig
+    feed(controller, clock, OWNER, frames=8, dt=0.2)
+    assert actuator.is_open
+    feed(controller, clock, OWNER, frames=40, dt=0.2)                 # 8 s of eating
+    assert actuator.is_open
+
+
+def test_a_manual_open_is_left_alone_and_a_manual_close_is_kept(rig):
+    controller, actuator, clock, _ = rig
+    controller.set_manual("open")
+    feed(controller, clock, None, frames=24, dt=0.5, present=False)
+    assert actuator.is_open
+
+    controller.set_manual("closed")
+    before = writes(actuator)
+    feed(controller, clock, None, frames=12, dt=0.5, present=False)
+    assert writes(actuator) - before == 1
+
+
+def test_a_holding_servo_is_not_rewritten(rig):
+    """It is already pushing back towards closed; the actuator skips the write."""
+    controller, actuator, clock, _ = rig
+    actuator.servos[0].detach_when_idle = False
+    controller.force_close()                  # attach and hold
+    before = writes(actuator)
+    feed(controller, clock, None, frames=24, dt=0.5, present=False)
+    assert writes(actuator) == before
+
+
+def test_the_reassert_can_be_turned_off(rig):
+    controller, actuator, clock, _ = rig
+    controller.cfg.policy.reassert_closed_s = 0
+    before = writes(actuator)
+    feed(controller, clock, None, frames=24, dt=0.5, present=False)
+    assert writes(actuator) == before

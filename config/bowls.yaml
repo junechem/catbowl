@@ -94,6 +94,11 @@ bowl_defaults:
     close_on_intruder: true
     intruder_grace_s: 2.0
     cooldown_s: 3.0
+    # A limp servo (detach_when_idle: true) can be pawed open while the bowl is
+    # shut. Re-send "closed" this often while the lid should be down, so a pushed
+    # lid goes back. It returns at the servo's full speed, not the slew limit.
+    # Does nothing for a servo that holds. 0 turns it off.
+    reassert_closed_s: 5.0
 
 bowls:
   # bowl1's lid is a cardboard disc lying flat on the bowl, swung sideways by

@@ -62,6 +62,9 @@ class BowlController:
         self._cooldown_until = 0.0
         self._denied_at: dict[str, float] = {}
         self._manual: str | None = None
+        # When "closed" was last sent to the lid. The app closes every lid
+        # before building its controller, so construction counts as one.
+        self._closed_sent_at = clock()
         # observe() runs on the bowl's worker thread; set_manual() is called
         # from the status server's. Both mutate the same state machine.
         self._lock = threading.RLock()
@@ -99,6 +102,8 @@ class BowlController:
         # collected so the status page keeps showing what the camera sees, but
         # no transition fires: the lid stays where a human put it.
         if self._manual is not None:
+            if self._manual == "closed":
+                self._keep_closed(now)
             return
 
         if self.state is BowlState.COOLDOWN:
@@ -107,6 +112,9 @@ class BowlController:
             self._tick_closed(now, present)
         else:
             self._tick_open(now, present)
+
+        if self.state is not BowlState.OPEN:
+            self._keep_closed(now)
 
     def set_manual(self, mode: str | None) -> None:
         """Pin the lid open or closed by hand, or hand control back.
@@ -136,12 +144,12 @@ class BowlController:
                 duration = round(now - self._opened_at, 1)
                 self.stats["seconds_open"] = round(self.stats["seconds_open"] + duration, 1)
             self.state = BowlState.CLOSED
-            self.actuator.close()
+            self._send_close(now)
         else:
             if self.state is BowlState.OPEN:
                 duration = round(now - self._opened_at, 1)
                 self.stats["seconds_open"] = round(self.stats["seconds_open"] + duration, 1)
-                self.actuator.close()
+                self._send_close(now)
             self.state = BowlState.COOLDOWN
             self._cooldown_until = now + self.cfg.policy.cooldown_s
             self.votes.clear()
@@ -157,7 +165,7 @@ class BowlController:
         if self.state is BowlState.OPEN:
             self._close(self.clock(), reason)
         else:
-            self.actuator.close()
+            self._send_close(self.clock())
 
     def status(self) -> dict:
         now = self.clock()
@@ -233,8 +241,29 @@ class BowlController:
         self.state = BowlState.COOLDOWN
         self._cooldown_until = now + self.cfg.policy.cooldown_s
         self._intruder_since = None
-        self.actuator.close()
+        self._send_close(now)
         self._emit("closed", cat=self.cat, detail={"reason": reason, "duration_s": duration, **(extra or {})})
+
+    def _send_close(self, now: float) -> None:
+        self._closed_sent_at = now
+        self.actuator.close()
+
+    def _keep_closed(self, now: float) -> None:
+        """Re-send "closed" every reassert_closed_s while the lid should be down.
+
+        A servo that goes limp between moves can be pawed open with the bowl
+        shut, and nothing else would notice until the next meal. The servo
+        knows its absolute angle, so re-sending the closed angle puts the lid
+        back wherever it was pushed to. A servo that is still holding is
+        already there and the actuator skips the write.
+
+        The return is not slewed: the software never learns where the lid was
+        pushed to, so it cannot ramp from there, and the servo returns at its
+        own full speed.
+        """
+        every = self.cfg.policy.reassert_closed_s
+        if every and now - self._closed_sent_at >= every:
+            self._send_close(now)
 
     def _emit(self, kind: str, cat: str = "", detail: dict | None = None) -> None:
         try:

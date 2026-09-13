@@ -127,7 +127,8 @@ class ServoActuator(Actuator):
                     self._sleep(delay)
 
             self._position = fraction
-            log.info("%s lid -> %s", self.name, "open" if fraction > 0.5 else "closed")
+            if span:   # a re-sent "closed" on a closed lid is not news
+                log.info("%s lid -> %s", self.name, "open" if fraction > 0.5 else "closed")
             if self.servo.detach_when_idle:
                 self._sleep(0.35)     # let the horn arrive before cutting drive
                 self.release()
