@@ -184,8 +184,37 @@ def main() -> int:
         print(f"  {cat:<6} {int(mine.sum()):6d}   {right / mine.sum():9.1%}   "
               f"{1 - right / mine.sum():11.1%}   {other_cat:18d}")
 
-    print("\nA visit is many frames, and one confident frame opens the lid, so a cat")
-    print("turned away in this table is a single frame - not a cat left hungry.")
+    # Per frame is the wrong unit for a lid. A cat stands at the bowl for
+    # thirty frames and one confident frame opens it, so what matters is
+    # whether a *visit* contains one - and whether it contains a confident
+    # frame naming the wrong cat, which is what would feed the wrong animal.
+    print(f"\nper visit at {floor:.2f} - what a cat walking up actually experiences:")
+    print("  cat    visits   opens for it   opens for the wrong cat   never opens")
+    for cat in sorted(set(y)):
+        if cat == OTHER:
+            continue
+        ids = sorted(set(groups[y == cat]))
+        opened = wrong = silent = 0
+        for visit in ids:
+            frames = (groups == visit)
+            confident = frames & (confidence >= floor)
+            names = set(predicted[confident])
+            if cat in names:
+                opened += 1
+            if names - {cat, OTHER}:
+                wrong += 1
+            if not names - {OTHER}:
+                silent += 1
+        print(f"  {cat:<6} {len(ids):6d}   {opened / len(ids):11.1%}   "
+              f"{wrong / len(ids):22.1%}   {silent / len(ids):10.1%}")
+
+    junk_ids = sorted(set(groups[y == OTHER]))
+    fed = sum(1 for visit in junk_ids
+              if set(predicted[(groups == visit) & (confidence >= floor)]) - {OTHER})
+    print(f"  junk   {len(junk_ids):6d}   {fed / len(junk_ids):11.1%}   "
+          "<- junk runs that would have opened a lid")
+    print("\nThe detector gates all of this: ssdlite has to agree an animal is there")
+    print("before the classifier is asked at all, so junk rarely gets this far.")
     return 0
 
 
