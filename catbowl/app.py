@@ -17,6 +17,7 @@ from .config import AppConfig, BowlConfig, CaptureConfig
 from .controller import BowlController
 from .detector import Detector, build_detector
 from .events import Event, EventLog
+from .presort import VISIT_GAP_S, Shot, visit_verdict
 from .recognizer import Recognizer
 from .sorting import Sorter
 
@@ -50,6 +51,9 @@ class BowlWorker(threading.Thread):
         self.period = 1.0 / max(loop_fps, 0.1)
         self.snapshot_dir = snapshot_dir
         self.capture = capture or CaptureConfig()
+        # Photos taken during the current visit: (where it was filed, what the
+        # classifier said). Emptied when the visit ends and is judged whole.
+        self._visit: list[tuple[Path, Shot]] = []
         self._capture_root = Path(self.capture.dir) if self.capture.dir else None
         self._capture_dir = self._capture_root / "unsorted" if self._capture_root else None
         self._last_capture = 0.0
@@ -103,12 +107,61 @@ class BowlWorker(threading.Thread):
             if remaining > 0:
                 self._stop.wait(remaining)
 
+        # A visit interrupted by a shutdown still deserves its verdict: the
+        # photos are already on disk, and judging them now saves a human the
+        # frames the rest of the visit would have settled.
+        self._settle_visit(force=True)
         log.info("%s: worker stopped", self.cfg.id)
+
+    def _settle_visit(self, now: float | None = None, force: bool = False) -> int:
+        """Re-file this visit's photos once the whole visit has been seen.
+
+        Each photo is filed the moment it is taken, on its own evidence, so a
+        crash or a kill never loses one. But a frame is not an independent
+        sample: thirty captures two seconds apart are one cat, and a blurred
+        one in the middle is the same animal as the twenty sure ones around it.
+        So when the visit ends the frames are judged together (see presort.py)
+        and any photo the visit overrules is moved to where the visit says it
+        belongs - usually out of `unsure` and into a name.
+
+        Returns how many photos were moved, for the tests and the log.
+        """
+        now = time.monotonic() if now is None else now
+        if not self._visit:
+            return 0
+        if not force and now - self._last_capture < VISIT_GAP_S:
+            return 0
+
+        shots = [shot for _, shot in self._visit]
+        verdict = visit_verdict(shots, self._recognizer_floor())
+        moved = 0
+        if verdict.label is not None:
+            for path, shot in self._visit:
+                if shot.verdict == verdict.label or not path.exists():
+                    continue
+                destination = self._capture_into(verdict.label)
+                if destination is None:
+                    continue
+                destination.mkdir(parents=True, exist_ok=True)
+                try:
+                    path.rename(destination / path.name)
+                    moved += 1
+                except OSError:  # pragma: no cover - a human may have filed it already
+                    log.debug("%s: could not re-file %s", self.cfg.id, path.name)
+        if moved:
+            log.info("%s: visit of %d photos settled as %s, %d re-filed",
+                     self.cfg.id, len(shots), verdict.label, moved)
+        self._visit.clear()
+        return moved
+
+    def _recognizer_floor(self) -> float:
+        return self.recognizer.min_confidence if self.recognizer else 1.0
 
     def _process(self, image: np.ndarray) -> tuple[bool, str | None, float]:
         detection = self.detector.detect(image)
         if detection is None:
             self.latest_crop = None
+            self._settle_visit()
             return False, None, 0.0
 
         crop = detection.crop(image, pad_frac=0.15)
@@ -133,8 +186,22 @@ class BowlWorker(threading.Thread):
 
         prediction = self.recognizer.predict(crop)
         self.inferences += 1
-        self._maybe_capture(image, crop, self._verdict_for(prediction))
+        verdict = self._verdict_for(prediction)
+        banked = self._maybe_capture(image, crop, verdict)
+        if banked is not None:
+            self._remember(banked, verdict, prediction)
         return True, prediction.label, prediction.confidence
+
+    def _remember(self, path: Path, verdict: str, prediction) -> None:
+        """Keep this photo's verdict until the visit it belongs to has ended."""
+        self._visit.append((path, Shot(
+            name=path.name,
+            taken=time.monotonic(),
+            probabilities=dict(prediction.probabilities),
+            label=prediction.raw_label,
+            confidence=prediction.confidence,
+            verdict=verdict,
+        )))
 
     def _verdict_for(self, prediction) -> str:
         """The proposal folder a prediction belongs in."""
@@ -178,7 +245,7 @@ class BowlWorker(threading.Thread):
         return self._capture_root / "proposed" / verdict
 
     def _maybe_capture(self, frame: np.ndarray, crop: np.ndarray,
-                       verdict: str | None = None) -> None:
+                       verdict: str | None = None) -> Path | None:
         """Bank a photo of whatever is at the bowl, for a later training run.
 
         Runs on every detection rather than on state changes, because the point
@@ -187,27 +254,30 @@ class BowlWorker(threading.Thread):
         """
         directory = self._capture_into(verdict)
         if directory is None:
-            return
+            return None
         now = time.monotonic()
         if now - self._last_capture < self.capture.interval_s:
-            return
+            return None
         if self.capture.max_images and self._captured >= self.capture.max_images:
-            return
+            return None
         self._last_capture = now
         try:
             import cv2
 
             directory.mkdir(parents=True, exist_ok=True)
             stamp = f"{datetime.now():%Y%m%d-%H%M%S-%f}"[:-3]
-            cv2.imwrite(str(directory / f"{self.cfg.id}-{stamp}.jpg"), crop)
+            path = directory / f"{self.cfg.id}-{stamp}.jpg"
+            cv2.imwrite(str(path), crop)
             if self.capture.save_frame:
                 cv2.imwrite(str(directory / f"{self.cfg.id}-{stamp}-frame.jpg"), frame)
             self._captured += 1
             if self.capture.max_images and self._captured == self.capture.max_images:
                 log.info("%s: capture folder has reached max_images (%d); stopping",
                          self.cfg.id, self.capture.max_images)
+            return path
         except Exception:  # pragma: no cover - collecting data is never critical
             log.exception("%s: could not save a capture", self.cfg.id)
+            return None
 
     def _maybe_snapshot(self) -> None:
         """Save the crop behind each state change - free extra training data."""

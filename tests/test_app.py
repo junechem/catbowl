@@ -153,6 +153,8 @@ def test_no_model_treats_any_detection_as_the_bowls_own_cat():
     worker.latest_crop = None
     worker._capture_dir = None                   # no dataset collection here
     worker._capture_root = None
+    worker._visit = []
+    worker._last_capture = 0.0
     worker.detector = MotionDetector(DetectorConfig(warmup_frames=1, min_area_frac=0.001))
 
     # Learn an empty scene, then put something in it.
@@ -178,6 +180,8 @@ def test_a_recognizer_free_worker_reports_nothing_when_nothing_moves():
     worker.latest_crop = None
     worker._capture_dir = None                   # no dataset collection here
     worker._capture_root = None
+    worker._visit = []
+    worker._last_capture = 0.0
     worker.detector = MotionDetector(DetectorConfig(warmup_frames=1, min_area_frac=0.001))
 
     blank = np.zeros((120, 160, 3), dtype=np.uint8)
@@ -239,6 +243,8 @@ def _crowd_worker(recognizer, crowd):
     worker.latest_crop = None
     worker._capture_dir = None
     worker._capture_root = None
+    worker._visit = []
+    worker._last_capture = 0.0
     worker.inferences = 0
     worker.detector = Always()
     return worker
@@ -290,3 +296,89 @@ def test_without_a_classifier_captures_still_go_to_the_queue(trained):
 
     assert list((collected / "unsorted").glob("*.jpg"))
     assert not (collected / "proposed").exists()
+
+
+# --------------------------------------------------------------------------- #
+# a visit is re-filed once it has been seen whole
+# --------------------------------------------------------------------------- #
+
+def _sorting_worker(tmp_path, floor=0.85):
+    """A worker that banks photos, with the classifier stubbed out per call."""
+    from catbowl.app import BowlWorker
+    from catbowl.config import BowlConfig, CaptureConfig, ServoConfig
+
+    worker = BowlWorker.__new__(BowlWorker)
+    worker.cfg = BowlConfig(id="bowl1", cats=["J", "K"], servos=[ServoConfig(channel=0)])
+    worker.capture = CaptureConfig(dir=str(tmp_path), interval_s=0.0)
+    worker._capture_root = tmp_path
+    worker._capture_dir = tmp_path / "unsorted"
+    worker._visit = []
+    worker._last_capture = 0.0
+    worker._captured = 0
+    worker.latest_crop = None
+    worker.inferences = 0
+
+    class Floor:
+        min_confidence = floor
+
+    worker.recognizer = Floor()
+    return worker
+
+
+def _bank(worker, verdict, probabilities, taken):
+    """Pretend a photo was taken and filed under *verdict*."""
+    from catbowl.presort import Shot
+
+    directory = worker._capture_into(verdict)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"bowl1-2026091{len(worker._visit)}-120000-000.jpg"
+    path.write_bytes(b"\xff\xd8jpeg")
+    best = max(probabilities, key=lambda k: probabilities[k])
+    worker._visit.append((path, Shot(name=path.name, taken=taken, probabilities=probabilities,
+                                     label=best, confidence=probabilities[best],
+                                     verdict=verdict)))
+    worker._last_capture = taken
+    return path
+
+
+def test_a_blurred_frame_is_refiled_once_the_visit_has_been_seen(tmp_path):
+    """The live half of the visit prior: unsure in the middle of a sure visit."""
+    worker = _sorting_worker(tmp_path)
+    sure = {"J": 0.97, "K": 0.02, "_other": 0.01}
+    blur = {"J": 0.44, "K": 0.31, "_other": 0.25}
+    for index, probabilities in enumerate([sure, sure, blur, sure, sure]):
+        verdict = "J" if probabilities is sure else "unsure"
+        stray = _bank(worker, verdict, probabilities, taken=1000.0 + index)
+
+    moved = worker._settle_visit(now=1000.0 + 60, force=False)
+    assert moved == 1
+    assert not stray.exists() or stray.parent.name == "J"
+    assert len(list((tmp_path / "proposed" / "J").glob("*.jpg"))) == 5
+    assert not list((tmp_path / "proposed" / "unsure").glob("*.jpg"))
+
+
+def test_a_visit_still_in_progress_is_left_alone(tmp_path):
+    worker = _sorting_worker(tmp_path)
+    _bank(worker, "J", {"J": 0.97, "K": 0.02, "_other": 0.01}, taken=time.monotonic())
+    assert worker._settle_visit() == 0, "the cat is still at the bowl"
+    assert worker._visit, "and its photos are still being collected"
+
+
+def test_a_visit_of_two_cats_is_not_smoothed(tmp_path):
+    """Same guard as presort: a shared bowl goes to a human, not to a majority."""
+    worker = _sorting_worker(tmp_path)
+    for index in range(3):
+        _bank(worker, "J", {"J": 0.97, "K": 0.02, "_other": 0.01}, taken=1000.0 + index)
+    for index in range(3, 5):
+        _bank(worker, "K", {"J": 0.02, "K": 0.97, "_other": 0.01}, taken=1000.0 + index)
+
+    assert worker._settle_visit(now=1100.0) == 0
+    assert len(list((tmp_path / "proposed" / "J").glob("*.jpg"))) == 3
+    assert len(list((tmp_path / "proposed" / "K").glob("*.jpg"))) == 2
+
+
+def test_settling_a_visit_forgets_it(tmp_path):
+    worker = _sorting_worker(tmp_path)
+    _bank(worker, "J", {"J": 0.97, "K": 0.02, "_other": 0.01}, taken=1000.0)
+    worker._settle_visit(now=1100.0)
+    assert worker._visit == []
