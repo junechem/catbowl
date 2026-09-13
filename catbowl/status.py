@@ -259,8 +259,12 @@ function draw(){
   : `<span>${total} photo${total===1?'':'s'}</span>`;
  sheet.className = picked ? 'show' : '';
  who.textContent = picked || '';
+ // On a proposals tab the photo is still in the queue - it was copied, not
+ // moved - so "unsorted" would read as a move to where it already is.
+ const reviewing = bucket.startsWith('proposed/');
  keys.innerHTML = targets.filter(b => b !== bucket).map(b =>
-   `<button onclick="move('${b}')">${b}</button>`).join('') +
+   `<button onclick="move('${b}')">${
+      reviewing && b === 'unsorted' ? 'not sure - leave in queue' : b}</button>`).join('') +
    `<button class=minor onclick="tap(null)">close</button>`;
 }
 

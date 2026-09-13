@@ -385,3 +385,14 @@ def test_a_bucket_outside_the_known_list_is_still_refused(sorter, proposed):
         sorter.dir_for("proposed/../../etc")
     with pytest.raises(SortError):
         sorter.dir_for("proposed/nope")
+
+
+def test_sending_a_proposal_back_to_the_queue_only_drops_the_guess(sorter, collected, proposed):
+    """The original never left the queue, so there is nothing to move back."""
+    name = proposed["K"][0]
+    sorter.move(name, "proposed/K", "unsorted")
+
+    assert (collected / "unsorted" / name).is_file()
+    assert not (collected / "proposed" / "K" / name).exists()
+    assert name in sorter.pending(refresh=True), "it still needs sorting by hand"
+    assert len(list((collected / "unsorted").iterdir())) == 5, "no duplicate in the queue"

@@ -198,10 +198,18 @@ class Sorter:
         target_dir.mkdir(parents=True, exist_ok=True)
 
         original = self.unsorted / name
-        if source_bucket in self.review_buckets and target_bucket != UNSORTED and original.is_file():
-            # presort copies rather than moves, so the photo being vouched for
-            # still sits in the queue. File that one and drop the copy, or the
-            # same image would be trained on twice and shown to a human again.
+        if source_bucket in self.review_buckets and original.is_file():
+            # presort copies rather than moves, so the photo being judged still
+            # sits in the queue. Everything here acts on that original and then
+            # drops the copy - otherwise the same image is filed twice, trained
+            # on twice, and shown to a human again.
+            if target_bucket == UNSORTED:
+                # "back to the queue": it never left, so this only says the
+                # proposal was not accepted. Nothing is lost - the photo is
+                # still in unsorted, waiting to be sorted by hand.
+                source.unlink()
+                log.info("dismissed the guess for %s (%s)", name, source_bucket)
+                return name
             target = _free_path(target_dir / name)
             os.replace(original, target)
             source.unlink()
