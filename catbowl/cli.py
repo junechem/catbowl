@@ -12,6 +12,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from .presort import VISIT_GAP_S
+
 log = logging.getLogger("catbowl")
 
 DEFAULT_CONFIG = "config/bowls.yaml"
@@ -233,15 +235,17 @@ def cmd_presort(args) -> int:
     most of it. What it must never do is file straight into the human-sorted
     buckets: a wrong guess there becomes a wrong label, the next model learns
     it, and nobody ever sees the mistake. So proposals land in their own tree
-    under `proposed/`, for a person to look through and then move across.
+    under `proposed/`, for a person to check on /browse and then file across.
 
-    Anything the model is not sure about goes to `proposed/unsure/` rather than
-    to its best guess - those are the photos worth a human's attention.
+    The photos are judged a visit at a time rather than one by one - see
+    presort.py - and anything still unclear goes to `proposed/unsure/` rather
+    than to a best guess. Those are the ones worth a human's attention.
     """
     import cv2
 
     from .config import load_config
     from .embedder import build_embedder
+    from .presort import Shot, decide, taken_at
     from .recognizer import ClassifierBundle, Recognizer
     from .sorting import UNSORTED
 
@@ -268,45 +272,49 @@ def cmd_presort(args) -> int:
     print(f"{len(photos)} photos from {root}")
     print(f"model {Path(args.model or cfg.recognition.classifier).name}: "
           f"{', '.join(bundle.labels)} at threshold {threshold:.2f}")
-    print(f"{'moving' if args.move else 'copying'} into {out_root}/<label>/ - "
-          "check these before filing them\n")
 
-    counts: dict[str, int] = {}
-    manifest = out_root / "proposed.csv"
-    out_root.mkdir(parents=True, exist_ok=True)
-    rows = ["file,label,confidence,runner_up,runner_up_confidence"]
-
+    shots: list[Shot] = []
     for index, photo in enumerate(photos, 1):
         image = cv2.imread(str(photo))
         if image is None:
             log.warning("unreadable, left alone: %s", photo.name)
             continue
         prediction = recognizer.predict(image)
-        # UNSURE, not the best guess: the whole point of the threshold is that
-        # below it the model's opinion is not worth a human's trust.
-        bucket = prediction.label if prediction.is_known else "unsure"
-        ranked = sorted(prediction.probabilities.items(), key=lambda kv: kv[1], reverse=True)
-        second = ranked[1] if len(ranked) > 1 else ("", 0.0)
-
-        destination = out_root / bucket
-        destination.mkdir(parents=True, exist_ok=True)
-        if args.move:
-            shutil.move(str(photo), destination / photo.name)
-        else:
-            shutil.copy2(photo, destination / photo.name)
-
-        counts[bucket] = counts.get(bucket, 0) + 1
-        rows.append(f"{photo.name},{bucket},{prediction.confidence:.4f},"
-                    f"{second[0]},{second[1]:.4f}")
+        shots.append(Shot(name=photo.name, taken=taken_at(photo.name),
+                          probabilities=prediction.probabilities,
+                          label=prediction.raw_label, confidence=prediction.confidence))
         if index % 50 == 0 or index == len(photos):
             print(f"  {index}/{len(photos)}", flush=True)
 
+    outcome = decide(shots, threshold, gap_s=args.visit_gap, use_visits=not args.per_photo)
+
+    print(f"\n{'moving' if args.move else 'copying'} into {out_root}/<label>/")
+    rows = ["file,verdict,own_label,confidence,visit,rescued"]
+    for shot in shots:
+        destination = out_root / shot.verdict
+        destination.mkdir(parents=True, exist_ok=True)
+        source = root / shot.name
+        if args.move:
+            shutil.move(str(source), destination / shot.name)
+        else:
+            shutil.copy2(source, destination / shot.name)
+        rows.append(f"{shot.name},{shot.verdict},{shot.label},{shot.confidence:.4f},"
+                    f"{shot.visit},{int(shot.rescued)}")
+
+    manifest = out_root / "proposed.csv"
     manifest.write_text("\n".join(rows) + "\n")
 
-    total = sum(counts.values())
+    total = sum(outcome.counts.values())
     print("\nproposed:")
-    for bucket in sorted(counts, key=lambda b: (b == "unsure", b)):
-        print(f"  {bucket:<10} {counts[bucket]:5d}  ({counts[bucket] / total:.0%})")
+    for bucket in sorted(outcome.counts, key=lambda b: (b == "unsure", b)):
+        count = outcome.counts[bucket]
+        print(f"  {bucket:<10} {count:5d}  ({count / total:.0%})")
+    if not args.per_photo:
+        print(f"\n{outcome.visits} visits, {outcome.smoothed} of them settled as a whole.")
+        print(f"{outcome.rescued} photos were named by their visit rather than by themselves.")
+        if outcome.mixed:
+            print(f"{outcome.mixed} visits held confident frames for more than one cat "
+                  "and were left per-photo - check those first.")
     print(f"\nconfidences in {manifest}")
     print("check them at http://<pi>:8080/browse - the proposed/* tabs. Filing one "
           "from there moves the original out of the queue, so nothing is sorted twice.")
@@ -698,6 +706,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="below this the photo goes to proposed/unsure (default: the model's own)")
     p.add_argument("--move", action="store_true",
                    help="move rather than copy, emptying the unsorted pile")
+    p.add_argument("--visit-gap", type=float, default=VISIT_GAP_S, metavar="S",
+                   help="photos further apart than this belong to different visits "
+                        f"(default {VISIT_GAP_S:g}s)")
+    p.add_argument("--per-photo", action="store_true",
+                   help="judge every photo alone, ignoring which visit it belongs to")
     p.set_defaults(func=cmd_presort)
 
     p = sub.add_parser("calibrate", help="interactively find the servo end positions")

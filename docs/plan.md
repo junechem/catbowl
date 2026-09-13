@@ -61,6 +61,10 @@ second cat arriving is noticed within about two seconds rather than instantly.
    with anything under the threshold going to `proposed/unsure/`. This doubles
    as the first real test of the model: a human checks the proposals, and how
    many need correcting is the score.
+   Photos are judged a visit at a time, not one by one: captures two seconds
+   apart are the same cat, so a blurred frame in the middle of a run inherits
+   the name its neighbours were sure of. A visit holding confident frames for
+   two different cats is refused and left per-photo.
 3. **Check the proposals** on `/browse`, which lists `proposed/*` as tabs beside
    the real buckets. Filing a photo from there moves the *original* out of the
    queue and drops the copy, so accepting the machine's work is one click and
@@ -71,6 +75,20 @@ second cat arriving is noticed within about two seconds rather than instantly.
 5. **Rename the cats.** The config still says mochi/pepper/biscuit while the
    photos say J/K/F. The `cat:` field of each bowl has to match the classifier's
    labels exactly, so this has to happen together with step 4.
+
+## Time, and what uses it
+
+Every listing on `/browse` is already in time order - the capture filename
+carries the timestamp, so a visit's frames sit together in the grid whichever
+folder they are in.
+
+`presort` uses time as evidence, as above. The **running rig does not**, beyond
+the vote window: `votes_required` of the last `vote_window` frames must agree,
+which is about a second of history and no more. It carries no memory of who was
+just here. That is deliberate so far - a lid that remembers is a lid that can be
+wrong for longer - but a visit-level prior with hysteresis (harder to switch
+identity than to keep it) is the obvious next refinement once the model is
+trusted.
 
 ## Open questions
 
