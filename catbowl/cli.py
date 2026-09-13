@@ -228,6 +228,40 @@ def cmd_eval(args) -> int:
 # hardware commands
 # --------------------------------------------------------------------------- #
 
+def calibration_range(servos: list) -> tuple[list, float, float]:
+    """Servos re-spanned to the widest travel the first one can safely make.
+
+    An actuator only moves between each servo's closed_deg and open_deg, so
+    calibrating through the configured servos can never reach an angle outside
+    the current guess - which is exactly what calibration is for. The returned
+    servos run from the first servo's *lo* to *hi* degrees instead, with every
+    other servo following along its own configured line (a mirrored partner
+    still mirrors), and lo..hi narrowed so that no servo leaves 0..180.
+    """
+    from dataclasses import replace
+
+    first = servos[0]
+    span = first.open_deg - first.closed_deg
+
+    def slope(servo) -> float:
+        # Never 0: config insists every servo travels at least 5 degrees.
+        return (servo.open_deg - servo.closed_deg) / span
+
+    def angle(servo, deg: float) -> float:
+        """This servo's angle when the first servo is at *deg*."""
+        return servo.closed_deg + (deg - first.closed_deg) * slope(servo)
+
+    lo, hi = 0.0, 180.0
+    for servo in servos[1:]:
+        # The first-servo angles at which this one reaches 0 and 180.
+        ends = sorted(first.closed_deg + (limit - servo.closed_deg) / slope(servo)
+                      for limit in (0.0, 180.0))
+        lo, hi = max(lo, ends[0]), min(hi, ends[1])
+    wide = [replace(s, closed_deg=round(angle(s, lo), 3), open_deg=round(angle(s, hi), 3))
+            for s in servos]
+    return wide, lo, hi
+
+
 def cmd_calibrate(args) -> int:
     """Find the two angles that mean 'lid down' and 'lid clear of the bowl'."""
     from .actuators import ActuatorFactory
@@ -236,7 +270,14 @@ def cmd_calibrate(args) -> int:
     cfg = load_config(args.config)
     bowl = cfg.bowl(args.bowl)
     factory = ActuatorFactory(cfg.actuator)
-    actuator = factory.create(bowl.id, bowl.servos)
+    wide, lo, hi = calibration_range(bowl.servos)
+    actuator = factory.create(bowl.id, wide)
+    # Its "lid -> open/closed" lines judge the widened range, not the real lid,
+    # and would call 170 "open". The angle printed below is the truth.
+    logging.getLogger("catbowl.actuators").setLevel(logging.WARNING)
+
+    def fraction_for(degrees: float) -> float:
+        return (degrees - lo) / (hi - lo)
 
     print(f"Calibrating {bowl.id} ({bowl.cat}).")
     for i, s in enumerate(bowl.servos):
@@ -245,8 +286,8 @@ def cmd_calibrate(args) -> int:
     if len(bowl.servos) > 1:
         print("  the servos are ganged - typed angles are the FIRST servo's angle,")
         print("  and the others follow proportionally through their own range.")
-    print("Type an angle in degrees to move there, 'o'/'c' to test the configured")
-    print("positions, or 'q' to quit. Keep fingers and cats clear.\n")
+    print(f"Type an angle from {lo:g} to {hi:g} to move there, 'o'/'c' to test the")
+    print("configured positions, or 'q' to quit. Keep fingers and cats clear.\n")
     try:
         while True:
             try:
@@ -255,25 +296,22 @@ def cmd_calibrate(args) -> int:
                 break
             if raw in ("q", "quit", "exit"):
                 break
-            if raw == "o":
-                actuator.open()
-                continue
-            if raw == "c":
-                actuator.close()
-                continue
-            try:
-                degrees = float(raw)
-            except ValueError:
-                print("  enter a number, or o/c/q")
-                continue
-            span = bowl.servo.open_deg - bowl.servo.closed_deg
-            fraction = (degrees - bowl.servo.closed_deg) / span if span else 0.0
-            actuator.move_to(min(1.0, max(0.0, fraction)))
+            if raw in ("o", "c"):
+                target = bowl.servo.open_deg if raw == "o" else bowl.servo.closed_deg
+            else:
+                try:
+                    target = float(raw)
+                except ValueError:
+                    print("  enter a number, or o/c/q")
+                    continue
+                if not lo <= target <= hi:
+                    print(f"  {target:g} is out of range; moving to the nearest end")
+            actuator.move_to(fraction_for(target))
             shown = "  ".join(
                 f"servo{i}={deg:.1f}"
                 for i, deg in enumerate(actuator.angles_for(actuator.position))
             )
-            print(f"  moved to {shown}  (fraction {actuator.position:.2f})")
+            print(f"  moved to {shown}")
     finally:
         factory.shutdown()
     if len(bowl.servos) > 1:
