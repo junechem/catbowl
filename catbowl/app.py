@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import UNKNOWN, __version__
+from . import CROWD, UNKNOWN, __version__
 from .actuators import ActuatorFactory
 from .cameras import CameraHub, CameraView
 from .config import AppConfig, BowlConfig, CaptureConfig
@@ -110,6 +110,12 @@ class BowlWorker(threading.Thread):
         crop = detection.crop(image, pad_frac=0.15)
         self.latest_crop = crop
         self._maybe_capture(image, crop)
+        if detection.crowd > 1:
+            # Two cats at one bowl: whichever one the crop shows, the other is
+            # standing right there, so an open lid feeds the wrong cat. Answered
+            # before the classifier runs - the question "which cat is this" has
+            # no useful answer here, and it is the one question it can answer.
+            return True, CROWD, 1.0
         if self.recognizer is None:
             # No classifier: identity is stubbed out and anything the detector
             # finds is treated as this bowl's own cat. Everything downstream -

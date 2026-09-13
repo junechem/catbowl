@@ -211,3 +211,63 @@ def test_capture_stops_at_max_images(trained):
 
     images = list((collected / "unsorted").glob("*.jpg"))
     assert 0 < len(images) <= 2 * len(app.workers)
+
+
+# --------------------------------------------------------------------------- #
+# two cats at one bowl
+# --------------------------------------------------------------------------- #
+
+def _crowd_worker(recognizer, crowd):
+    """A worker whose detector always sees *crowd* cats in one box."""
+    from catbowl.app import BowlWorker
+    from catbowl.config import BowlConfig, ServoConfig
+    from catbowl.detector import Detection, Detector
+
+    class Always(Detector):
+        def detect(self, image):
+            return Detection((10, 10, 40, 40), 0.9, "ssdlite", crowd=crowd)
+
+    worker = BowlWorker.__new__(BowlWorker)
+    worker.cfg = BowlConfig(id="bowl1", cat="mochi", servos=[ServoConfig(channel=0)])
+    worker.recognizer = recognizer
+    worker.latest_crop = None
+    worker._capture_dir = None
+    worker.inferences = 0
+    worker.detector = Always()
+    return worker
+
+
+class Sure:
+    """A classifier that is certain every crop is mochi. Counts its calls."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def predict(self, crop):
+        from catbowl.recognizer import Prediction
+
+        self.calls += 1
+        return Prediction(label="mochi", confidence=1.0, raw_label="mochi")
+
+
+def test_two_cats_are_never_reported_as_the_bowls_own_cat():
+    """The crop shows one of them; the other is standing right beside it."""
+    from catbowl import CROWD
+
+    worker = _crowd_worker(Sure(), crowd=2)
+    present, label, _ = worker._process(np.zeros((120, 160, 3), dtype=np.uint8))
+    assert present
+    assert label == CROWD
+    assert worker.recognizer.calls == 0, "identity is not a question worth asking here"
+
+
+def test_two_cats_are_refused_even_with_no_classifier_at_all():
+    from catbowl import CROWD
+
+    worker = _crowd_worker(None, crowd=2)
+    assert worker._process(np.zeros((120, 160, 3), dtype=np.uint8))[1] == CROWD
+
+
+def test_one_cat_still_reaches_the_classifier():
+    worker = _crowd_worker(Sure(), crowd=1)
+    assert worker._process(np.zeros((120, 160, 3), dtype=np.uint8))[1] == "mochi"

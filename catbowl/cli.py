@@ -175,6 +175,7 @@ def cmd_train(args) -> int:
         test_size=args.test_size,
         augment=not args.no_augment,
         target_precision=args.target_precision,
+        labels_wanted=args.labels,
     )
     print()
     print(format_report(metrics))
@@ -221,6 +222,94 @@ def cmd_eval(args) -> int:
     if mistakes:
         print("\nmisclassified:")
         print("\n".join(mistakes))
+    return 0
+
+
+def cmd_presort(args) -> int:
+    """Let the classifier take a first pass at the unsorted pile.
+
+    Sorting a few hundred photos by hand is the slow half of building a
+    training set, and a model that is already good at the cats it knows can do
+    most of it. What it must never do is file straight into the human-sorted
+    buckets: a wrong guess there becomes a wrong label, the next model learns
+    it, and nobody ever sees the mistake. So proposals land in their own tree
+    under `proposed/`, for a person to look through and then move across.
+
+    Anything the model is not sure about goes to `proposed/unsure/` rather than
+    to its best guess - those are the photos worth a human's attention.
+    """
+    import cv2
+
+    from .config import load_config
+    from .embedder import build_embedder
+    from .recognizer import ClassifierBundle, Recognizer
+    from .sorting import UNSORTED
+
+    cfg = load_config(args.config)
+    if cfg.capture is None or not cfg.capture.dir:
+        log.error("capture.dir is not set in %s, so there is no unsorted pile", args.config)
+        return 1
+
+    root = Path(args.src or Path(cfg.capture.dir) / UNSORTED)
+    out_root = Path(args.out or Path(cfg.capture.dir) / "proposed")
+    if not root.is_dir():
+        log.error("no such directory: %s", root)
+        return 1
+
+    bundle = ClassifierBundle.load(args.model or cfg.recognition.classifier)
+    threshold = args.threshold if args.threshold is not None else bundle.min_confidence
+    recognizer = Recognizer(build_embedder(cfg.recognition), bundle, threshold)
+
+    photos = sorted(p for p in root.iterdir() if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+    if not photos:
+        print(f"nothing to sort in {root}")
+        return 0
+
+    print(f"{len(photos)} photos from {root}")
+    print(f"model {Path(args.model or cfg.recognition.classifier).name}: "
+          f"{', '.join(bundle.labels)} at threshold {threshold:.2f}")
+    print(f"{'moving' if args.move else 'copying'} into {out_root}/<label>/ - "
+          "check these before filing them\n")
+
+    counts: dict[str, int] = {}
+    manifest = out_root / "proposed.csv"
+    out_root.mkdir(parents=True, exist_ok=True)
+    rows = ["file,label,confidence,runner_up,runner_up_confidence"]
+
+    for index, photo in enumerate(photos, 1):
+        image = cv2.imread(str(photo))
+        if image is None:
+            log.warning("unreadable, left alone: %s", photo.name)
+            continue
+        prediction = recognizer.predict(image)
+        # UNSURE, not the best guess: the whole point of the threshold is that
+        # below it the model's opinion is not worth a human's trust.
+        bucket = prediction.label if prediction.is_known else "unsure"
+        ranked = sorted(prediction.probabilities.items(), key=lambda kv: kv[1], reverse=True)
+        second = ranked[1] if len(ranked) > 1 else ("", 0.0)
+
+        destination = out_root / bucket
+        destination.mkdir(parents=True, exist_ok=True)
+        if args.move:
+            shutil.move(str(photo), destination / photo.name)
+        else:
+            shutil.copy2(photo, destination / photo.name)
+
+        counts[bucket] = counts.get(bucket, 0) + 1
+        rows.append(f"{photo.name},{bucket},{prediction.confidence:.4f},"
+                    f"{second[0]},{second[1]:.4f}")
+        if index % 50 == 0 or index == len(photos):
+            print(f"  {index}/{len(photos)}", flush=True)
+
+    manifest.write_text("\n".join(rows) + "\n")
+
+    total = sum(counts.values())
+    print("\nproposed:")
+    for bucket in sorted(counts, key=lambda b: (b == "unsure", b)):
+        print(f"  {bucket:<10} {counts[bucket]:5d}  ({counts[bucket] / total:.0%})")
+    print(f"\nconfidences in {manifest}")
+    print(f"look through {out_root} and move what is right into "
+          f"{Path(cfg.capture.dir)}/<label>/, then retrain.")
     return 0
 
 
@@ -590,6 +679,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-augment", action="store_true", help="skip mirrored copies")
     p.add_argument("--target-precision", type=float, default=0.99,
                    help="precision the suggested threshold should hit")
+    p.add_argument("--labels", nargs="+", metavar="CAT",
+                   help="train on only these subdirectories (the rest, e.g. discard "
+                        "and unsorted, are not cats and must not become classes)")
     p.set_defaults(func=cmd_train)
 
     p = sub.add_parser("eval", help="score a trained classifier against a folder of crops")
@@ -597,6 +689,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--model")
     p.add_argument("--threshold", type=float)
     p.set_defaults(func=cmd_eval)
+
+    p = sub.add_parser("presort", help="let the classifier propose labels for the unsorted pile")
+    p.add_argument("--src", help="folder of photos (default: <capture.dir>/unsorted)")
+    p.add_argument("--out", help="where proposals go (default: <capture.dir>/proposed)")
+    p.add_argument("--model")
+    p.add_argument("--threshold", type=float,
+                   help="below this the photo goes to proposed/unsure (default: the model's own)")
+    p.add_argument("--move", action="store_true",
+                   help="move rather than copy, emptying the unsorted pile")
+    p.set_defaults(func=cmd_presort)
 
     p = sub.add_parser("calibrate", help="interactively find the servo end positions")
     p.add_argument("--bowl", required=True)

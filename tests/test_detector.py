@@ -292,3 +292,45 @@ def test_reset_forgets_the_remembered_box():
     gate = in_a_visit(Scripted(WHOLE_CAT), Scripted(WHOLE_CAT), clock)
     gate.reset()
     assert gate._last_cat is None
+
+
+# --------------------------------------------------------------------------- #
+# counting heads
+#
+# The classifier answers "which cat is this crop", which is the wrong question
+# when two cats are at one bowl: whoever the crop shows, the other one is
+# standing beside it and would eat through an open lid. Only the detector can
+# see both, so the count travels with the detection.
+# --------------------------------------------------------------------------- #
+
+TWO_CATS = Detection((12, 12, 30, 30), 0.9, "ssdlite", crowd=2)
+
+
+def test_one_cat_is_the_default_count():
+    assert Detection((0, 0, 4, 4), 0.5, "motion").crowd == 1
+
+
+def test_a_second_cat_is_reported_on_the_confirming_frame():
+    gate = build(Scripted(MOVED), Scripted(TWO_CATS))
+    assert gate.detect(FRAME).crowd == 2
+
+
+def test_the_count_survives_the_frames_between_confirmations():
+    """Motion cannot count, so between checks the last real count stands."""
+    clock = FakeClock()
+    gate = build(Scripted(MOVED), Scripted(TWO_CATS), clock=clock, confirm_every_s=2.0)
+    gate.detect(FRAME)
+    clock.advance(0.5)
+    between = gate.detect(FRAME)
+    assert between.source == "hybrid"
+    assert between.crowd == 2, "the second cat did not leave just because motion cannot see it"
+
+
+def test_the_count_drops_back_when_the_second_cat_leaves():
+    clock = FakeClock()
+    confirm = Scripted(TWO_CATS)
+    gate = build(Scripted(MOVED), confirm, clock=clock, confirm_every_s=2.0)
+    gate.detect(FRAME)
+    confirm.result = IS_CAT           # one of them wandered off
+    clock.advance(2.5)
+    assert gate.detect(FRAME).crowd == 1

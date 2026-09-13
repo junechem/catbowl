@@ -335,3 +335,33 @@ def test_the_reassert_can_be_turned_off(rig):
     before = writes(actuator)
     feed(controller, clock, None, frames=24, dt=0.5, present=False)
     assert writes(actuator) == before
+
+
+# --------------------------------------------------------------------------- #
+# two cats
+#
+# The worker reports CROWD instead of a name when the detector counts more than
+# one cat. The state machine needs no special case for it: an unfamiliar label
+# cannot open the lid, and it closes an open one like any other intruder.
+# --------------------------------------------------------------------------- #
+
+def test_a_crowd_never_opens_the_lid(rig):
+    from catbowl import CROWD
+
+    controller, actuator, clock, _ = rig
+    feed(controller, clock, CROWD, frames=20)
+    assert controller.state is BowlState.CLOSED
+    assert not actuator.is_open
+
+
+def test_a_second_cat_arriving_closes_an_open_lid(rig):
+    from catbowl import CROWD
+
+    controller, actuator, clock, events = rig
+    feed(controller, clock, OWNER, frames=10)
+    assert actuator.is_open, "the owner alone should have been fed"
+
+    feed(controller, clock, CROWD, frames=20)      # a housemate joins
+    assert not actuator.is_open
+    reasons = [e.detail.get("reason") for e in events if e.kind == "closed"]
+    assert "intruder" in reasons

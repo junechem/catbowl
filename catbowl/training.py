@@ -14,6 +14,7 @@ import logging
 import random
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
@@ -44,13 +45,21 @@ class Dataset:
         return {label: self.labels.count(label) for label in self.classes}
 
 
-def load_dataset(root: str | Path) -> Dataset:
-    """Read ``root/<label>/*.jpg`` into a flat list."""
+def load_dataset(root: str | Path, labels_wanted: Sequence[str] | None = None) -> Dataset:
+    """Read ``root/<label>/*.jpg`` into a flat list.
+
+    *labels_wanted* keeps only those subdirectories. The rig's capture folder
+    holds more than cats - `unsorted`, `discard`, `proposed` - and every one of
+    those would otherwise become a class the model tries to recognise.
+    """
     root = Path(root)
     if not root.is_dir():
         raise FileNotFoundError(f"dataset directory not found: {root}")
+    keep = set(labels_wanted) if labels_wanted else None
     paths, labels = [], []
     for directory in sorted(p for p in root.iterdir() if p.is_dir()):
+        if keep is not None and directory.name not in keep:
+            continue
         for image in sorted(directory.iterdir()):
             if image.suffix.lower() in IMAGE_SUFFIXES:
                 paths.append(image)
@@ -206,6 +215,7 @@ def train(
     augment: bool = True,
     seed: int = 0,
     target_precision: float = 0.99,
+    labels_wanted: Sequence[str] | None = None,
 ) -> tuple[ClassifierBundle, dict]:
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import classification_report, confusion_matrix
@@ -214,7 +224,7 @@ def train(
     random.seed(seed)
     np.random.seed(seed)
 
-    dataset = load_dataset(data_root)
+    dataset = load_dataset(data_root, labels_wanted)
     counts = dataset.counts()
     log.info("dataset: %d images across %s", len(dataset), counts)
 

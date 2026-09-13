@@ -38,6 +38,17 @@ def test_load_dataset_reads_one_directory_per_cat(tmp_path):
     assert len(dataset) == 72
 
 
+def test_only_the_named_directories_become_classes(tmp_path):
+    """The rig's capture folder holds discard/ and unsorted/ beside the cats."""
+    root = write_cats(tmp_path / "collected")
+    (root / "discard").mkdir()
+    (root / "discard" / "junk.jpg").write_bytes((root / sorted(COLOURS)[0] / "000.jpg").read_bytes())
+
+    wanted = sorted(COLOURS)
+    assert load_dataset(root).classes == sorted(wanted + ["discard"])
+    assert load_dataset(root, wanted).classes == wanted
+
+
 def test_empty_dataset_directory_is_a_clear_error(tmp_path):
     empty = tmp_path / "crops"
     empty.mkdir()

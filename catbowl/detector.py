@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 import numpy as np
@@ -59,6 +59,10 @@ class Detection:
     bbox: tuple[int, int, int, int]   # x, y, w, h in frame pixels
     score: float
     source: str
+    # How many cats the frame held, when something counted them. A detector
+    # that cannot count (motion, none) leaves this 1, and callers must not
+    # read that as "exactly one cat" - only as "no second cat was reported".
+    crowd: int = 1
 
     def crop(self, image: np.ndarray, pad_frac: float = 0.0) -> np.ndarray:
         x, y, w, h = self.bbox
@@ -166,14 +170,21 @@ class SsdliteCatDetector(Detector):
             out = self.model([tensor])[0]
 
         best: Detection | None = None
+        crowd = 0
         for box, label, score in zip(out["boxes"], out["labels"], out["scores"]):
             if int(label) != COCO_CAT_ID or float(score) < self.cfg.score_threshold:
                 continue
+            crowd += 1
             x0, y0, x1, y1 = (int(v) for v in box.tolist())
             det = Detection((x0, y0, x1 - x0, y1 - y0), float(score), "ssdlite")
             if best is None or det.score > best.score:
                 best = det
-        return best
+        if best is None:
+            return None
+        # The crop stays the best single cat: the classifier is asked "which cat
+        # is this one", and the count travels separately for the caller to veto
+        # on. Merging two cats into one box would just make an unreadable crop.
+        return replace(best, crowd=crowd)
 
 
 class HybridCatDetector(Detector):
@@ -279,7 +290,9 @@ class HybridCatDetector(Detector):
         if self._last_cat is None:
             return motion
         x, y, w, h = _union(motion.bbox, self._last_cat.bbox)
-        return Detection((x, y, w, h), motion.score, "hybrid")
+        # The head count comes from the last confirmation too: motion cannot
+        # count cats, so between checks the answer is the last real one.
+        return Detection((x, y, w, h), motion.score, "hybrid", self._last_cat.crowd)
 
     def reset(self) -> None:
         self._motion.reset()
