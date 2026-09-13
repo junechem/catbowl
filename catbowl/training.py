@@ -45,25 +45,36 @@ class Dataset:
         return {label: self.labels.count(label) for label in self.classes}
 
 
-def load_dataset(root: str | Path, labels_wanted: Sequence[str] | None = None) -> Dataset:
+def load_dataset(root: str | Path, labels_wanted: Sequence[str] | None = None,
+                 negative: str | None = None) -> Dataset:
     """Read ``root/<label>/*.jpg`` into a flat list.
 
     *labels_wanted* keeps only those subdirectories. The rig's capture folder
     holds more than cats - `unsorted`, `discard`, `proposed` - and every one of
     those would otherwise become a class the model tries to recognise.
+
+    *negative* names a directory whose photos are loaded under OTHER: things
+    that are not any of the cats. It is deliberately not a class of its own,
+    because a bowl's cat is never called `discard` and a lid would read that as
+    the wrong cat arriving. OTHER can never win a vote, so a frame that lands
+    there means "nothing to act on" - which is exactly what an empty bowl or a
+    blurred half-frame is.
     """
     root = Path(root)
     if not root.is_dir():
         raise FileNotFoundError(f"dataset directory not found: {root}")
     keep = set(labels_wanted) if labels_wanted else None
+    if keep is not None and negative:
+        keep.add(negative)
     paths, labels = [], []
     for directory in sorted(p for p in root.iterdir() if p.is_dir()):
         if keep is not None and directory.name not in keep:
             continue
+        name = OTHER if directory.name == negative else directory.name
         for image in sorted(directory.iterdir()):
             if image.suffix.lower() in IMAGE_SUFFIXES:
                 paths.append(image)
-                labels.append(directory.name)
+                labels.append(name)
     if not paths:
         raise FileNotFoundError(
             f"no images under {root} - expected one subdirectory per cat, e.g. {root}/mochi/*.jpg"
@@ -216,6 +227,7 @@ def train(
     seed: int = 0,
     target_precision: float = 0.99,
     labels_wanted: Sequence[str] | None = None,
+    negative: str | None = None,
 ) -> tuple[ClassifierBundle, dict]:
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import classification_report, confusion_matrix
@@ -224,7 +236,7 @@ def train(
     random.seed(seed)
     np.random.seed(seed)
 
-    dataset = load_dataset(data_root, labels_wanted)
+    dataset = load_dataset(data_root, labels_wanted, negative)
     counts = dataset.counts()
     log.info("dataset: %d images across %s", len(dataset), counts)
 

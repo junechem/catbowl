@@ -178,6 +178,7 @@ def cmd_train(args) -> int:
         augment=not args.no_augment,
         target_precision=args.target_precision,
         labels_wanted=args.labels,
+        negative=args.negative,
     )
     print()
     print(format_report(metrics))
@@ -246,8 +247,8 @@ def cmd_presort(args) -> int:
     from .config import load_config
     from .embedder import build_embedder
     from .presort import Shot, decide, taken_at
-    from .recognizer import ClassifierBundle, Recognizer
-    from .sorting import UNSORTED
+    from .recognizer import OTHER, ClassifierBundle, Recognizer
+    from .sorting import DISCARD, UNSORTED
 
     cfg = load_config(args.config)
     if cfg.capture is None or not cfg.capture.dir:
@@ -280,9 +281,14 @@ def cmd_presort(args) -> int:
             log.warning("unreadable, left alone: %s", photo.name)
             continue
         prediction = recognizer.predict(image)
+        # OTHER is the model's "none of the cats". It is a real answer, so it
+        # gets its own tab rather than being filed with the ones it is unsure
+        # of - and that tab is named after the folder those photos came from.
+        label = DISCARD if prediction.raw_label == OTHER else prediction.raw_label
         shots.append(Shot(name=photo.name, taken=taken_at(photo.name),
-                          probabilities=prediction.probabilities,
-                          label=prediction.raw_label, confidence=prediction.confidence))
+                          probabilities={DISCARD if k == OTHER else k: v
+                                         for k, v in prediction.probabilities.items()},
+                          label=label, confidence=prediction.confidence))
         if index % 50 == 0 or index == len(photos):
             print(f"  {index}/{len(photos)}", flush=True)
 
@@ -687,6 +693,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-augment", action="store_true", help="skip mirrored copies")
     p.add_argument("--target-precision", type=float, default=0.99,
                    help="precision the suggested threshold should hit")
+    p.add_argument("--negative", metavar="DIR",
+                   help="this folder is 'not one of the cats' (e.g. discard), learnt as a "
+                        "class that can never open a lid")
     p.add_argument("--labels", nargs="+", metavar="CAT",
                    help="train on only these subdirectories (the rest, e.g. discard "
                         "and unsorted, are not cats and must not become classes)")
