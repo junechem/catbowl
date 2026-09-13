@@ -112,7 +112,7 @@ bowl_defaults:
 
 bowls:
   # One bowl, three cats, until there is hardware for more. The bowl opens for
-  # any of them, but J and F are on an allowance: two minutes of open lid each
+  # any of them, but J and F are on an allowance: one minute of open lid each
   # per rolling hour, spent across as many visits as they like. K has no entry
   # in `rations`, so she eats whenever she walks up.
   #
@@ -133,8 +133,8 @@ bowls:
   - id: bowl1
     cats: [K, J, F]
     rations:
-      J: 120        # seconds of open lid per hour. `J: {seconds: 120, per_s: 3600}` in full
-      F: 120
+      J: 60         # seconds of open lid per hour. `J: {seconds: 60, per_s: 3600}` in full
+      F: 60
     camera: {device: 0}
     servo: {channel: 1, closed_deg: 170, open_deg: 85, detach_when_idle: true}
 

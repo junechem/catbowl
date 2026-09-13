@@ -1,8 +1,8 @@
 # The state of the catbowl
 
 Where the rig is, what is wrong with it, and what happens next.
-Updated 2026-09-13. Keep it updated: it is the only place most of this is
-written down.
+Updated 2026-09-13 (retrained that evening). Keep it updated: it is the only
+place most of this is written down.
 
 ## Where it is now
 
@@ -12,12 +12,14 @@ rather than taped. The camera is a Logitech Brio 100 on USB. The status page
 serves the live view, the sorting queue and the browser at
 `http://rjwpi.local:8080/`.
 
-A classifier now exists, trained on the Pi from the photos the rig banked and a
-human sorted: **J 925, K 722, F 710, and 1232 discards**. The discards are
-learnt as a negative class (`_other`, "none of the cats") rather than as a
-fourth cat, so a lid can never open for one.
+A classifier now exists, trained from the photos the rig banked and a human
+sorted: **J 1074, K 798, F 854, and 1427 discards** (4153 photos, retrained
+2026-09-13 on the desktop rather than the Pi - forty seconds instead of seven
+minutes, and the Pi only receives the finished `models/classifier.joblib`). The
+discards are learnt as a negative class (`_other`, "none of the cats") rather
+than as a fourth cat, so a lid can never open for one.
 
-`catbowl train` reported 90.4% accuracy. **That number is wrong and should not
+`catbowl train` reported 91.0% accuracy. **That number is wrong and should not
 be quoted.** It splits its test set one photo at a time, and the rig captures
 every two seconds, so a visit leaves thirty near-identical frames with some in
 training and the rest in test - the model was scored on photos it had all but
@@ -28,15 +30,26 @@ sit in training while the original was tested.
 and reports what a cat walking up actually experiences. Run it on the Pi; it
 caches its embeddings, so only the first run costs seven minutes.
 
-    honest accuracy, no floor: 80.6%
-    at min_confidence 0.85: 54% of frames accepted, 94.1% of those correct
+    honest accuracy, no floor: 75.4%
+    at min_confidence 0.85: 51.4% of frames accepted, 92.3% of those correct
 
     per visit          opens for it    opens for the wrong cat    never opens
-    K (108 visits)            88.9%                       0.9%         11.1%
-    J (166 visits)            64.5%                       3.6%         34.3%
-    F (125 visits)            54.4%                       4.8%         43.2%
+    K (115 visits)            90.4%                       0.0%          9.6%
+    J (178 visits)            57.9%                       3.9%         41.0%
+    F (139 visits)            59.7%                       2.9%         38.1%
+    junk (258 visits)         12.4%   <- would have opened a lid
 
-K works. J is mediocre. **F is the problem** - see below.
+For comparison, the previous model on 3589 photos: K 88.9%, J 64.5%, F 54.4%,
+raw accuracy 80.6%. **F improved by five points and J lost seven.** The raw
+number fell too, which is what a harder and more varied test set looks like
+rather than a worse model - the added photos come mostly from the new wide
+crops, so the model is now being asked a fairer question. The wrong-cat rate
+fell everywhere.
+
+K works. J and F are both mediocre, and now mediocre in the same way: their
+failures are silence, not confusion with each other (F called another cat in 4
+frames of 854, J in 8 of 1074). Both still lose most of their misses to
+`_other` - see below.
 
 Everything lives on the Pi under `data/collected/`, which is gitignored: the
 photos exist in exactly one place and no git operation can touch them. The rig
@@ -94,11 +107,11 @@ there is time to build more. So the bowl feeds all three, on different terms:
 | cat | rule |
 | --- | --- |
 | K | opens whenever she walks up, for as long as she stays |
-| J | two minutes of open lid per rolling hour |
-| F | two minutes of open lid per rolling hour |
+| J | one minute of open lid per rolling hour |
+| F | one minute of open lid per rolling hour |
 
 The allowance is a **budget, not one meal an hour**. A cat startled away after
-ten seconds keeps the rest of its two minutes and can come back for it. Time is
+ten seconds keeps the rest of its minute and can come back for it. Time is
 charged while the lid is open - including the `close_delay_s` it stays up behind
 a cat that has already wandered off - and charged as the meal happens, so a cat
 that never leaves is still billed. An hour after each mouthful, that mouthful's
@@ -109,14 +122,14 @@ approach with a `denied` event saying how long until it can eat again. A cat
 arriving while another is eating still ends the meal - it gets its own turn on
 its own allowance, rather than sharing the open lid.
 
-Allowances live in memory. A restart hands every cat a full two minutes again,
+Allowances live in memory. A restart hands every cat a full minute again,
 which errs towards feeding a cat twice rather than starving one that has eaten
 nothing.
 
 ## The F problem
 
-F is recognised in a quarter of its frames, and the bowl fails to open for F in
-**43% of its visits**. The cause is not what it first looks like.
+F is recognised in 28% of its frames, and the bowl fails to open for F in
+**38% of its visits**. The cause is not what it first looks like.
 
 F's errors do not land on J. They land on `_other` - the model has learnt that F
 looks like *junk*, and it learnt that from the labels. F is all black; J has a
@@ -136,9 +149,12 @@ confusion between two cats. Three things bear on it:
 - **Judging a visit rather than a frame breaks the loop**, because a visit where
   the feet show in a few frames can name the headless frames beside them. This
   is what `presort` does in batch and what the rig now does live.
-- **The plan (2026-09-13) is to wait a week**, let the rig collect well-cropped
-  photos, and replace the older F and `discard` photos with them rather than
-  re-labelling what is already there.
+- **Adding a week of well-cropped photos helped, but only a little.** The
+  2026-09-13 retrain added 564 photos and moved F from 54.4% to 59.7% of visits.
+  The plan stands: keep collecting, then *replace* the older F and `discard`
+  photos rather than only adding to them. Roughly 543 of F's 854 photos and 861
+  of the 1427 discards still predate the crop fix, and they are the ones
+  teaching the bias.
 
 While waiting, **`proposed/discard` is the tab that needs a human most**. The
 model will keep filing F there, and accepting those proposals unchecked would
@@ -147,7 +163,8 @@ teach the next model the same bias from its own mistakes.
 ## What is running right now
 
 - Service `catbowl` on the Pi, in recognition mode (no `--no-model`).
-- `min_confidence: 0.85`, `open_votes: 1`, ration 120s/hour for J and F.
+- `min_confidence: 0.85`, `open_votes: 1`, ration 60s/hour for J and F
+  (halved from 120s on 2026-09-13).
 - Every capture filed into `data/collected/proposed/<guess>`; visits settled
   live when they end.
 - The old cats-only classifier is kept at `~/classifier-catsonly.joblib`, and a
@@ -155,13 +172,15 @@ teach the next model the same bias from its own mistakes.
 
 ## Next steps
 
-1. **Collect for a week.** Nothing to do but let it run and check the proposal
-   tabs, `proposed/discard` first.
+1. **Keep collecting.** Let it run and check the proposal tabs,
+   `proposed/discard` first. A week added 564 photos and five points of F.
 2. **Watch out for `capture.max_images` (5000)**, which counts everything
    unfiled - `unsorted/` plus every `proposed/` folder. Hit it and the rig stops
    banking photos silently.
-3. **Replace the old F and discard photos** with the new well-cropped ones. The
-   filename timestamps make the pre-2026-09-09 photos easy to pick out.
+3. **Replace the old F and discard photos** with the new well-cropped ones -
+   deleting, not just adding. The filename timestamps pick out the
+   pre-2026-09-09 photos: 543 in `F/`, 861 in `discard/`, 595 in `J/`.
+   J losing seven points in the retrain says the old crops hurt it too.
 4. **Retrain**, then re-run `tools/threshold_report.py` and compare the per-visit
    table above. That table, not `train`'s accuracy, is the measure of progress.
 5. **Build bowls 2 and 3**, and give J and F their own, at which point the
@@ -223,8 +242,11 @@ obvious next refinement once the model is trusted.
 - **Commands** (from the project dir, `catbowl` is not on PATH):
 
       .venv/bin/python -m catbowl --config config/bowls.yaml doctor
+      # Training runs on the desktop; only the .joblib goes to the Pi.
+      rsync -a rjweldon@rjwpi.local:Projects/0001_Catbowl/data/collected/ data/collected/
       .venv/bin/python -m catbowl --config config/bowls.yaml train \
           --data data/collected --labels J K F --negative discard
+      scp models/classifier.joblib rjweldon@rjwpi.local:Projects/0001_Catbowl/models/
       .venv/bin/python -m catbowl --config config/bowls.yaml presort
       .venv/bin/python tools/threshold_report.py
 
