@@ -136,7 +136,7 @@ bowls:
       J: 60         # seconds of open lid per hour. `J: {seconds: 60, per_s: 3600}` in full
       F: 60
     camera: {device: 0}
-    servo: {channel: 1, closed_deg: 170, open_deg: 85, detach_when_idle: true}
+    servo: {channel: 1, closed_deg: 175, open_deg: 65, detach_when_idle: true}
 
   # Placeholders for bowls that do not exist yet. The names are ignored while
   # `enabled: false`; give them real cats when the hardware is built.
