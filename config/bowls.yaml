@@ -114,7 +114,9 @@ bowls:
   # One bowl, three cats, until there is hardware for more. The bowl opens for
   # any of them, but J and F are on an allowance: one minute of open lid each
   # per rolling hour, spent across as many visits as they like. K has no entry
-  # in `rations`, so she eats whenever she walks up.
+  # in `rations`, so she eats whenever she walks up, and she is `uncapped`, so
+  # the 30-second max_open_s does not cut her off: her lid stays up until she
+  # leaves or another cat arrives.
   #
   # The allowance is a budget rather than one meal an hour on purpose: a cat
   # startled away after ten seconds keeps the rest and can come back for it.
@@ -135,6 +137,7 @@ bowls:
     rations:
       J: 60         # seconds of open lid per hour. `J: {seconds: 60, per_s: 3600}` in full
       F: 60
+    uncapped: [K]   # max_open_s does not apply: the lid stays up while K is there
     camera: {device: 0}
     servo: {channel: 1, closed_deg: 175, open_deg: 65, detach_when_idle: true}
 

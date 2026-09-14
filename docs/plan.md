@@ -1,7 +1,7 @@
 # The state of the catbowl
 
 Where the rig is, what is wrong with it, and what happens next.
-Updated 2026-09-13 (retrained that evening). Keep it updated: it is the only
+Updated 2026-09-14 (retrained that morning). Keep it updated: it is the only
 place most of this is written down.
 
 ## Where it is now
@@ -13,13 +13,13 @@ serves the live view, the sorting queue and the browser at
 `http://rjwpi.local:8080/`.
 
 A classifier now exists, trained from the photos the rig banked and a human
-sorted: **J 1074, K 798, F 854, and 1427 discards** (4153 photos, of which only 599
-carry the fixed wide crop, retrained 2026-09-13 on the desktop rather than the Pi - forty seconds instead of seven
+sorted: **J 1187, K 813, F 929, and 1505 discards** (4434 photos, retrained
+2026-09-14 on the desktop rather than the Pi - forty seconds instead of seven
 minutes, and the Pi only receives the finished `models/classifier.joblib`). The
 discards are learnt as a negative class (`_other`, "none of the cats") rather
 than as a fourth cat, so a lid can never open for one.
 
-`catbowl train` reported 91.0% accuracy. **That number is wrong and should not
+`catbowl train` reported 89.3% accuracy. **That number is wrong and should not
 be quoted.** It splits its test set one photo at a time, and the rig captures
 every two seconds, so a visit leaves thirty near-identical frames with some in
 training and the rest in test - the model was scored on photos it had all but
@@ -30,29 +30,35 @@ sit in training while the original was tested.
 and reports what a cat walking up actually experiences. Run it on the Pi; it
 caches its embeddings, so only the first run costs seven minutes.
 
-    honest accuracy, no floor: 75.4%
-    at min_confidence 0.85: 51.4% of frames accepted, 92.3% of those correct
+    honest accuracy, no floor: 76.9%
+    at min_confidence 0.85: 50.2% of frames accepted, 92.4% of those correct
 
     per visit          opens for it    opens for the wrong cat    never opens
-    K (115 visits)            90.4%                       0.0%          9.6%
-    J (178 visits)            57.9%                       3.9%         41.0%
-    F (139 visits)            59.7%                       2.9%         38.1%
-    junk (258 visits)         12.4%   <- would have opened a lid
+    K (121 visits)            88.4%                       0.8%         11.6%
+    J (196 visits)            59.2%                       4.1%         39.3%
+    F (154 visits)            61.0%                       2.6%         37.0%
+    junk (274 visits)         11.7%   <- would have opened a lid
 
-For comparison, the previous model on 3589 photos: K 88.9%, J 64.5%, F 54.4%,
-raw accuracy 80.6%. **F improved by five points and J lost seven.** The raw
+The history, per visit (K / J / F):
+
+    2026-09-13 am   3589 photos   88.9 / 64.5 / 54.4   raw 80.6%
+    2026-09-13 pm   4153 photos   90.4 / 57.9 / 59.7   raw 75.4%
+    2026-09-14      4434 photos   88.4 / 59.2 / 61.0   raw 76.9%
+
+Between the first two runs: **F improved by five points and J lost seven.** The raw
 number fell too, which is what a harder and more varied test set looks like
 rather than a worse model - the added photos come mostly from the new wide
 crops, so the model is now being asked a fairer question. The wrong-cat rate
 fell everywhere.
 
 K works. J and F are both mediocre, and now mediocre in the same way: their
-failures are silence, not confusion with each other (F called another cat in 4
-frames of 854, J in 8 of 1074). Both still lose most of their misses to
+failures are silence, not confusion with each other (F called another cat in 6
+frames of 929, J in 8 of 1187). Both still lose most of their misses to
 `_other` - see below.
 
 Everything lives on the Pi under `data/collected/`, which is gitignored: the
-photos exist in exactly one place and no git operation can touch them. The rig
+no git operation can touch the photos. The Pi's copy is the master; the desktop
+holds an rsync mirror for training. The rig
 files each new photo it takes into `proposed/<its guess>`, so the review queue
 builds itself and every day's photos are a fresh test of the model.
 
@@ -106,7 +112,7 @@ there is time to build more. So the bowl feeds all three, on different terms:
 
 | cat | rule |
 | --- | --- |
-| K | opens whenever she walks up, for as long as she stays |
+| K | opens whenever she walks up, and stays open until she leaves (`uncapped`) |
 | J | one minute of open lid per rolling hour |
 | F | one minute of open lid per rolling hour |
 
@@ -172,6 +178,8 @@ teach the next model the same bias from its own mistakes.
 - Service `catbowl` on the Pi, in recognition mode (no `--no-model`).
 - `min_confidence: 0.85`, `open_votes: 1`, ration 60s/hour for J and F
   (halved from 120s on 2026-09-13).
+- `max_open_s: 30` for J and F. K is `uncapped` (2026-09-14): her lid stays up
+  until she leaves or another cat arrives.
 - Every capture filed into `data/collected/proposed/<guess>`; visits settled
   live when they end.
 - The old cats-only classifier is kept at `~/classifier-catsonly.joblib`, and a

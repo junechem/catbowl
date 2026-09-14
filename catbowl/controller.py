@@ -285,7 +285,8 @@ class BowlController:
             self._close(now, "left")
             return
 
-        if self.cfg.policy.max_open_s and now - self._opened_at >= self.cfg.policy.max_open_s:
+        if (self.cfg.policy.max_open_s and self._feeding not in self.cfg.uncapped
+                and now - self._opened_at >= self.cfg.policy.max_open_s):
             self._close(now, "max_open_s")
 
     def _charge(self, now: float) -> None:

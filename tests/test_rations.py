@@ -217,3 +217,65 @@ def test_only_the_cat_being_fed_is_charged(shared):
 def test_a_ration_for_a_cat_the_bowl_does_not_feed_is_a_config_error():
     with pytest.raises(ConfigError, match="does not feed"):
         BowlConfig(id="bowl1", cats=["J"], rations={"K": RationConfig(seconds=10)})
+
+
+# --------------------------------------------------------------------------- #
+# the sitting cap, and the cat it does not apply to
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def capped():
+    """max_open_s of 30, with K exempt from it."""
+    clock = FakeClock()
+    events: list[Event] = []
+    bowl = BowlConfig(
+        id="bowl1",
+        cats=["J", "K", "F"],
+        uncapped=["K"],
+        servos=[ServoConfig(channel=0)],
+        policy=PolicyConfig(open_confirm_s=0.0, close_delay_s=5.0, max_open_s=30.0,
+                            close_on_intruder=True, intruder_grace_s=2.0,
+                            cooldown_s=1.0),
+    )
+    actuator = MockActuator("bowl1", bowl.servos, ActuatorConfig(driver="mock"))
+    controller = BowlController(bowl, actuator, vote_window=6, votes_required=4,
+                                clock=clock, on_event=events.append)
+    return controller, actuator, clock, events
+
+
+def test_an_uncapped_cat_is_not_cut_off_by_max_open_s(capped):
+    controller, actuator, clock, events = capped
+    eat(controller, clock, "K", 300.0)
+    assert actuator.is_open, "K stays fed for as long as she stays"
+    assert not [e for e in events if e.kind == "closed"]
+
+
+def test_a_capped_cat_still_is(capped):
+    controller, actuator, clock, events = capped
+    eat(controller, clock, "J", 40.0)
+    closed = [e for e in events if e.kind == "closed"]
+    assert closed and closed[0].detail["reason"] == "max_open_s"
+
+
+def test_an_uncapped_lid_still_drops_when_she_leaves(capped):
+    controller, actuator, clock, events = capped
+    eat(controller, clock, "K", 60.0)
+    leave(controller, clock)
+    assert not actuator.is_open
+    assert [e for e in events if e.kind == "closed"][-1].detail["reason"] == "left"
+
+
+def test_an_uncapped_lid_still_drops_for_an_intruder(capped):
+    controller, actuator, clock, events = capped
+    eat(controller, clock, "K", 60.0)
+    eat(controller, clock, "J", 4.0)
+    assert [e for e in events if e.kind == "closed"][-1].detail["reason"] == "intruder"
+
+
+@pytest.mark.parametrize("uncapped, rations, message", [
+    (["M"], {}, "does not feed"),
+    (["J"], {"J": RationConfig(seconds=60)}, "both uncapped and on a ration"),
+])
+def test_uncapped_is_checked(uncapped, rations, message):
+    with pytest.raises(ConfigError, match=message):
+        BowlConfig(id="bowl1", cats=["J", "K"], uncapped=uncapped, rations=rations)

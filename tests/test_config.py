@@ -49,6 +49,7 @@ def test_shipped_config_is_valid():
     assert len(live) == 1, "one bowl is built; the others are placeholders"
     assert live[0].cats == ["K", "J", "F"], "the one bowl feeds all three cats"
     assert set(live[0].rations) == {"J", "F"}, "K eats without limit, J and F do not"
+    assert live[0].uncapped == ["K"], "and K is not cut off by max_open_s"
 
 
 @pytest.mark.parametrize(

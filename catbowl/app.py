@@ -18,8 +18,8 @@ from .controller import BowlController
 from .detector import Detector, build_detector
 from .events import Event, EventLog
 from .presort import VISIT_GAP_S, Shot, visit_verdict
-from .recognizer import Recognizer
-from .sorting import Sorter
+from .recognizer import OTHER, Recognizer
+from .sorting import DISCARD, Sorter
 
 log = logging.getLogger(__name__)
 
@@ -134,12 +134,15 @@ class BowlWorker(threading.Thread):
 
         shots = [shot for _, shot in self._visit]
         verdict = visit_verdict(shots, self._recognizer_floor())
+        # The model's "none of the cats" is filed under the name a human uses
+        # for it, as _verdict_for does frame by frame - not in a folder of its own.
+        label = DISCARD if verdict.label == OTHER else verdict.label
         moved = 0
-        if verdict.label is not None:
+        if label is not None:
             for path, shot in self._visit:
-                if shot.verdict == verdict.label or not path.exists():
+                if shot.verdict == label or not path.exists():
                     continue
-                destination = self._capture_into(verdict.label)
+                destination = self._capture_into(label)
                 if destination is None:
                     continue
                 destination.mkdir(parents=True, exist_ok=True)
@@ -150,7 +153,7 @@ class BowlWorker(threading.Thread):
                     log.debug("%s: could not re-file %s", self.cfg.id, path.name)
         if moved:
             log.info("%s: visit of %d photos settled as %s, %d re-filed",
-                     self.cfg.id, len(shots), verdict.label, moved)
+                     self.cfg.id, len(shots), label, moved)
         self._visit.clear()
         return moved
 

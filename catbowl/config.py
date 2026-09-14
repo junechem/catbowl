@@ -131,6 +131,10 @@ class BowlConfig:
     cats: list[str] = field(default_factory=list)
     # Per-cat allowances. A cat with no entry here eats without limit.
     rations: dict[str, RationConfig] = field(default_factory=dict)
+    # Cats policy.max_open_s does not apply to: the lid stays up for as long as
+    # one of them is at the bowl. It still drops when she leaves, or when
+    # another cat arrives.
+    uncapped: list[str] = field(default_factory=list)
     camera: CameraConfig = field(default_factory=CameraConfig)
     # A lid may be driven by more than one servo - a heavy or wide lid usually
     # wants one on each hinge. They are ganged: every servo in this list is
@@ -154,6 +158,16 @@ class BowlConfig:
             raise ConfigError(
                 f"bowl {self.id!r}: ration for {', '.join(sorted(unknown))}, "
                 f"who this bowl does not feed (it feeds {', '.join(self.cats)})")
+        stray = set(self.uncapped) - set(self.cats)
+        if stray:
+            raise ConfigError(
+                f"bowl {self.id!r}: uncapped lists {', '.join(sorted(stray))}, "
+                f"who this bowl does not feed (it feeds {', '.join(self.cats)})")
+        capped_and_rationed = set(self.uncapped) & set(self.rations)
+        if capped_and_rationed:
+            raise ConfigError(
+                f"bowl {self.id!r}: {', '.join(sorted(capped_and_rationed))} "
+                "cannot be both uncapped and on a ration")
 
     @property
     def servo(self) -> ServoConfig:
@@ -357,12 +371,15 @@ def build_config(raw: dict) -> AppConfig:
         cats = entry.get("cats") or []
         if isinstance(cats, str):
             raise ConfigError(f"{context}.cats must be a list, e.g. [J, K, F]")
+        if isinstance(entry.get("uncapped"), str):
+            raise ConfigError(f"{context}.uncapped must be a list, e.g. [K]")
         bowls.append(
             BowlConfig(
                 id=str(entry["id"]),
                 cat=str(entry.get("cat") or ""),
                 cats=[str(cat) for cat in cats],
                 rations=_build_rations(entry.get("rations"), f"{context}.rations"),
+                uncapped=[str(c) for c in entry.get("uncapped") or []],
                 enabled=bool(entry.get("enabled", True)),
                 camera=_build(CameraConfig, entry.get("camera"), f"{context}.camera"),
                 servos=_build_servos(entry, context),

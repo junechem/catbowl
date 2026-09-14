@@ -382,3 +382,21 @@ def test_settling_a_visit_forgets_it(tmp_path):
     _bank(worker, "J", {"J": 0.97, "K": 0.02, "_other": 0.01}, taken=1000.0)
     worker._settle_visit(now=1100.0)
     assert worker._visit == []
+
+
+def test_a_visit_of_nothing_is_settled_into_discard(tmp_path):
+    """The model says `_other`; the folder a human files those in is `discard`.
+
+    Seen on the Pi on 2026-09-13: a visit settled as `_other` moved its photos
+    into a `proposed/_other` folder of their own, beside `proposed/discard`.
+    """
+    worker = _sorting_worker(tmp_path)
+    junk = {"J": 0.03, "K": 0.02, "_other": 0.95}
+    blur = {"J": 0.30, "K": 0.25, "_other": 0.45}
+    for index, probabilities in enumerate([junk, junk, blur, junk]):
+        _bank(worker, "discard" if probabilities is junk else "unsure", probabilities,
+              taken=1000.0 + index)
+
+    assert worker._settle_visit(now=1100.0) == 1
+    assert len(list((tmp_path / "proposed" / "discard").glob("*.jpg"))) == 4
+    assert not (tmp_path / "proposed" / "_other").exists()
