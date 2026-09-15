@@ -38,25 +38,20 @@ from catbowl.config import load_config                      # noqa: E402
 from catbowl.embedder import build_embedder                 # noqa: E402
 from catbowl.presort import VISIT_GAP_S, taken_at           # noqa: E402
 from catbowl.recognizer import OTHER                        # noqa: E402
-from catbowl.training import load_dataset                   # noqa: E402
+from catbowl.training import load_dataset, visit_ids        # noqa: E402
 
 CACHE = Path("~/.cache/catbowl-embeddings.npz").expanduser()
 
 
-def visits_of(paths: list[Path], labels: list[str], gap_s: float = VISIT_GAP_S) -> np.ndarray:
-    """A visit id per photo: consecutive captures of one cat, within *gap_s*."""
-    order = sorted(range(len(paths)), key=lambda i: (labels[i], taken_at(paths[i].name) or 0.0))
-    groups = np.zeros(len(paths), dtype=int)
-    visit = 0
-    previous_label, previous_time = None, None
-    for i in order:
-        when = taken_at(paths[i].name)
-        if when is None or labels[i] != previous_label or previous_time is None \
-                or when - previous_time > gap_s:
-            visit += 1
-        groups[i] = visit
-        previous_label, previous_time = labels[i], when
-    return groups
+def visits_of(paths: list[Path], gap_s: float = VISIT_GAP_S) -> np.ndarray:
+    """A visit id per photo, by time alone - the same grouping `train` splits on.
+
+    A visit whose frames were filed in two folders (`F/` and `unclear/`, say)
+    is still one visit. Grouping by folder as well would cut it in two, and
+    each half, being shorter, looks less likely to open the lid than the whole
+    visit really was.
+    """
+    return visit_ids([p.name for p in paths], gap_s, taken_at)
 
 
 def embed(dataset, recognition, refresh: bool) -> np.ndarray:
@@ -134,7 +129,7 @@ def main() -> int:
     parser.add_argument("--config", default="config/bowls.yaml")
     parser.add_argument("--data", default="data/collected")
     parser.add_argument("--labels", nargs="+", default=["J", "K", "F"])
-    parser.add_argument("--negative", default="discard")
+    parser.add_argument("--negative", nargs="+", default=["discard", "M"])
     parser.add_argument("--threshold", type=float, default=None,
                         help="the floor to report in detail (default: the config's)")
     parser.add_argument("--folds", type=int, default=5)
@@ -146,7 +141,7 @@ def main() -> int:
 
     dataset = load_dataset(args.data, args.labels, args.negative)
     y = np.array(dataset.labels)
-    groups = visits_of(dataset.paths, dataset.labels)
+    groups = visits_of(dataset.paths)
     print(f"{len(y)} photos, {len(set(groups))} visits, {dict(zip(*np.unique(y, return_counts=True)))}")
 
     X = embed(dataset, cfg.recognition, args.refresh)
@@ -196,7 +191,7 @@ def main() -> int:
         ids = sorted(set(groups[y == cat]))
         opened = wrong = silent = 0
         for visit in ids:
-            frames = (groups == visit)
+            frames = (groups == visit) & (y == cat)       # this cat's frames of it
             confident = frames & (confidence >= floor)
             names = set(predicted[confident])
             if cat in names:
@@ -210,7 +205,7 @@ def main() -> int:
 
     junk_ids = sorted(set(groups[y == OTHER]))
     fed = sum(1 for visit in junk_ids
-              if set(predicted[(groups == visit) & (confidence >= floor)]) - {OTHER})
+              if set(predicted[(groups == visit) & (y == OTHER) & (confidence >= floor)]) - {OTHER})
     print(f"  junk   {len(junk_ids):6d}   {fed / len(junk_ids):11.1%}   "
           "<- junk runs that would have opened a lid")
     print("\nThe detector gates all of this: ssdlite has to agree an animal is there")

@@ -1,7 +1,7 @@
 # The state of the catbowl
 
 Where the rig is, what is wrong with it, and what happens next.
-Updated 2026-09-14 (retrained that morning). Keep it updated: it is the only
+Updated 2026-09-14 (retrained that night, on the re-sorted discard pile). Keep it updated: it is the only
 place most of this is written down.
 
 ## Where it is now
@@ -13,14 +13,17 @@ serves the live view, the sorting queue and the browser at
 `http://rjwpi.local:8080/`.
 
 A classifier now exists, trained from the photos the rig banked and a human
-sorted: **J 1187, K 813, F 929, and 1505 discards** (4434 photos, retrained
-2026-09-14 on the desktop rather than the Pi - forty seconds instead of seven
+sorted: **J 1206, K 815, F 958**, and two folders learnt together as "not a
+cat": **`discard` 378** (no cat) and **`M` 276** (several cats). A third,
+**`unclear` 890** (a cat, but F or J cannot be told), is kept and not trained.
+Retrained 2026-09-14 on the desktop rather than the Pi - forty seconds instead of seven
 minutes, and the Pi only receives the finished `models/classifier.joblib`). The
 discards are learnt as a negative class (`_other`, "none of the cats") rather
 than as a fourth cat, so a lid can never open for one.
 
-`catbowl train` reported 89.3% accuracy. **That number is wrong and should not
-be quoted.** It splits its test set one photo at a time, and the rig captures
+`catbowl train` now reports **85.2%**, and since 2026-09-14 that number is
+honest: it holds out whole visits, keeps each mirrored copy with its original,
+and then refits the saved model on every photo. Before that date it split its test set one photo at a time, and the rig captures
 every two seconds, so a visit leaves thirty near-identical frames with some in
 training and the rest in test - the model was scored on photos it had all but
 memorised. Augmentation also runs before the split, so a photo's mirror could
@@ -30,14 +33,30 @@ sit in training while the original was tested.
 and reports what a cat walking up actually experiences. Run it on the Pi; it
 caches its embeddings, so only the first run costs seven minutes.
 
-    honest accuracy, no floor: 76.9%
-    at min_confidence 0.85: 50.2% of frames accepted, 92.4% of those correct
+    honest accuracy, no floor: 81.4%
+    at min_confidence 0.85: 51.5% of frames accepted, 95.6% of those correct
 
     per visit          opens for it    opens for the wrong cat    never opens
-    K (121 visits)            88.4%                       0.8%         11.6%
-    J (196 visits)            59.2%                       4.1%         39.3%
-    F (154 visits)            61.0%                       2.6%         37.0%
-    junk (274 visits)         11.7%   <- would have opened a lid
+    K (121 visits)            89.3%                       1.7%         10.7%
+    J (195 visits)            62.1%                       7.2%         35.4%
+    F (156 visits)            69.9%                       3.8%         26.9%
+    junk (165 visits)          7.9%   <- would have opened a lid
+
+Visits are grouped by time alone since 2026-09-14, whatever folder their
+frames were filed in, so these are not directly comparable with the rows
+below. The like-for-like comparison of the re-sort, same visits and same
+folds for each (`resort_ablation.py`, per visit at 0.85):
+
+    what "not a cat" was trained on       F      J      K   junk  crowd opens
+    discard + M + unclear (before)      64.8   63.4   89.2   4.3     33.3
+    discard only (M, unclear left out)  73.2   68.9   89.2   2.9     58.3
+    discard + M, unclear left out  <--  74.6   62.8   89.2   5.1     25.0
+    discard, and M as a crowd class     69.0   59.6   87.5   1.4     19.4
+
+The last would also close an open lid on about half of crowds, since it is
+the only one that can name a crowd; it cost F five points and was not chosen.
+Leaving M out of training entirely is unsafe: the detector misses most crowds,
+and the classifier is the real defence against them.
 
 The history, per visit (K / J / F):
 
@@ -178,6 +197,7 @@ teach the next model the same bias from its own mistakes.
 - Service `catbowl` on the Pi, in recognition mode (no `--no-model`).
 - `min_confidence: 0.85`, `open_votes: 1`, ration 60s/hour for J and F
   (halved from 120s on 2026-09-13).
+- Classifier trained on `J K F` with `--negative discard M` (2026-09-14).
 - `max_open_s: 30` for J and F. K is `uncapped` (2026-09-14): her lid stays up
   until she leaves or another cat arrives.
 - Every capture filed into `data/collected/proposed/<guess>`; visits settled
@@ -246,9 +266,12 @@ obvious next refinement once the model is trusted.
 - **The status page has no authentication.** `POST /control` moves a physical
   lid and `/sort/*` files photos, for anyone on the wi-fi. A deliberate
   home-LAN trade-off; do not port-forward it. `status_port: null` disables it.
-- **`catbowl train` reports a flattering accuracy** (random per-photo split,
-  augmentation before the split). Use `tools/threshold_report.py` for a number
-  worth acting on. The split inside `training.py` has not been fixed.
+- **Unclear frames still happen at the bowl.** `unclear/` is left out of
+  training, not out of the world. Shown one, the model hedges between F and J;
+  mostly that stays under 0.85 and does nothing (no open, no close), and the
+  next frame showing a face or white fur decides. About a third of unclear
+  visits do produce a confident call, and that is where the wrong-cat opens
+  come from.
 - **Second and third bowls.** `bowl2` and `bowl3` are configured but disabled,
   with placeholder cat names. Each needs a camera, a servo and a lid.
 
@@ -262,7 +285,7 @@ obvious next refinement once the model is trusted.
       # Training runs on the desktop; only the .joblib goes to the Pi.
       rsync -a rjweldon@rjwpi.local:Projects/0001_Catbowl/data/collected/ data/collected/
       .venv/bin/python -m catbowl --config config/bowls.yaml train \
-          --data data/collected --labels J K F --negative discard
+          --data data/collected --labels J K F --negative discard M
       scp models/classifier.joblib rjweldon@rjwpi.local:Projects/0001_Catbowl/models/
       .venv/bin/python -m catbowl --config config/bowls.yaml presort
       .venv/bin/python tools/threshold_report.py

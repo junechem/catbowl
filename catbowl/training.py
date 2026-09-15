@@ -46,7 +46,7 @@ class Dataset:
 
 
 def load_dataset(root: str | Path, labels_wanted: Sequence[str] | None = None,
-                 negative: str | None = None) -> Dataset:
+                 negative: str | Sequence[str] | None = None) -> Dataset:
     """Read ``root/<label>/*.jpg`` into a flat list.
 
     *labels_wanted* keeps only those subdirectories. The rig's capture folder
@@ -59,18 +59,23 @@ def load_dataset(root: str | Path, labels_wanted: Sequence[str] | None = None,
     the wrong cat arriving. OTHER can never win a vote, so a frame that lands
     there means "nothing to act on" - which is exactly what an empty bowl or a
     blurred half-frame is.
+
+    Several folders may be named. `discard` (no cat) and `M` (more than one)
+    are different things to a human sorting them, and the same thing to a lid:
+    do not open.
     """
     root = Path(root)
+    negatives = {negative} if isinstance(negative, str) else set(negative or ())
     if not root.is_dir():
         raise FileNotFoundError(f"dataset directory not found: {root}")
     keep = set(labels_wanted) if labels_wanted else None
-    if keep is not None and negative:
-        keep.add(negative)
+    if keep is not None:
+        keep |= negatives
     paths, labels = [], []
     for directory in sorted(p for p in root.iterdir() if p.is_dir()):
         if keep is not None and directory.name not in keep:
             continue
-        name = OTHER if directory.name == negative else directory.name
+        name = OTHER if directory.name in negatives else directory.name
         for image in sorted(directory.iterdir()):
             if image.suffix.lower() in IMAGE_SUFFIXES:
                 paths.append(image)
@@ -80,6 +85,25 @@ def load_dataset(root: str | Path, labels_wanted: Sequence[str] | None = None,
             f"no images under {root} - expected one subdirectory per cat, e.g. {root}/mochi/*.jpg"
         )
     return Dataset(paths, labels)
+
+
+def visit_ids(names: Sequence[str], gap_s: float, taken_at) -> np.ndarray:
+    """A visit number per photo: captures less than *gap_s* apart are one visit.
+
+    Grouped by time alone, whatever folder a frame was filed in - a visit split
+    between `F/` and `unclear/` is still one visit. A name with no timestamp is
+    a visit on its own.
+    """
+    times = [taken_at(name) for name in names]
+    order = sorted(range(len(names)), key=lambda i: (times[i] is None, times[i] or 0.0))
+    ids = np.zeros(len(names), dtype=int)
+    visit, previous = 0, None
+    for i in order:
+        if times[i] is None or previous is None or times[i] - previous > gap_s:
+            visit += 1
+        ids[i] = visit
+        previous = times[i]
+    return ids
 
 
 # --------------------------------------------------------------------------- #
@@ -150,8 +174,14 @@ def embed_dataset(
     embedder: Embedder,
     augment: bool = True,
     batch_size: int = 16,
+    sources: list[int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Embed every image, optionally adding a mirrored copy of each one."""
+    """Embed every image, optionally adding a mirrored copy of each one.
+
+    Pass a list as *sources* to have it filled with the index of the photo each
+    vector came from, so a mirror can be kept on the same side of a split as
+    its original.
+    """
     import cv2
 
     vectors: list[np.ndarray] = []
@@ -173,9 +203,13 @@ def embed_dataset(
             continue
         batch.append(image)
         batch_labels.append(label)
+        if sources is not None:
+            sources.append(i)
         if augment:
             batch.append(cv2.flip(image, 1))
             batch_labels.append(label)
+            if sources is not None:
+                sources.append(i)
         if len(batch) >= batch_size:
             flush()
         if (i + 1) % 100 == 0:
@@ -227,11 +261,25 @@ def train(
     seed: int = 0,
     target_precision: float = 0.99,
     labels_wanted: Sequence[str] | None = None,
-    negative: str | None = None,
+    negative: str | Sequence[str] | None = None,
 ) -> tuple[ClassifierBundle, dict]:
+    """Fit the classifier, score it honestly, then refit it on everything.
+
+    The rig captures every two seconds, so one visit leaves dozens of nearly
+    identical photos. Split them one photo at a time and the test set is full
+    of frames the model has all but seen - which is how this once reported
+    90% for a model that managed 80% on a cat it had not met. So the held-out
+    set is whole visits, and the mirrored copies stay with their originals.
+
+    The score comes from that split. The model that is saved does not: once
+    it has been scored, it is refitted on every photo, because a quarter of
+    the collection is too much to leave out of the model that feeds the cats.
+    """
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import classification_report, confusion_matrix
-    from sklearn.model_selection import train_test_split
+    from sklearn.model_selection import GroupShuffleSplit
+
+    from .presort import VISIT_GAP_S, taken_at
 
     random.seed(seed)
     np.random.seed(seed)
@@ -253,12 +301,18 @@ def train(
 
     embedder = build_embedder(recognition)
     log.info("embedding with %s", embedder.spec)
-    X, y = embed_dataset(dataset, embedder, augment=augment)
+    sources: list[int] = []
+    X, y = embed_dataset(dataset, embedder, augment=augment, sources=sources)
+    sources_arr = np.array(sources)
 
-    stratify = y if min(counts.values()) >= 2 else None
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=seed, stratify=stratify
-    )
+    visit = visit_ids([p.name for p in dataset.paths], VISIT_GAP_S, taken_at)[sources_arr]
+    first = np.r_[True, sources_arr[1:] != sources_arr[:-1]]   # an original, not its mirror
+    splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+    train_index, test_index = next(splitter.split(X, y, visit))
+    test_index = test_index[first[test_index]]
+    X_train, y_train, X_test, y_test = X[train_index], y[train_index], X[test_index], y[test_index]
+    log.info("scoring on %d photos from %d visits the model has not seen",
+             len(test_index), len(set(visit[test_index])))
 
     model = LogisticRegression(C=10.0, max_iter=3000, class_weight="balanced")
     model.fit(X_train, y_train)
@@ -280,8 +334,10 @@ def train(
         "suggested_threshold": threshold,
     }
 
+    final = LogisticRegression(C=10.0, max_iter=3000, class_weight="balanced")
+    final.fit(X, y)
     bundle = ClassifierBundle(
-        model=model,
+        model=final,
         labels=classes,
         embedder=embedder.spec,
         min_confidence=threshold,

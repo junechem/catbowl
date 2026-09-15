@@ -697,9 +697,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-augment", action="store_true", help="skip mirrored copies")
     p.add_argument("--target-precision", type=float, default=0.99,
                    help="precision the suggested threshold should hit")
-    p.add_argument("--negative", metavar="DIR",
-                   help="this folder is 'not one of the cats' (e.g. discard), learnt as a "
-                        "class that can never open a lid")
+    p.add_argument("--negative", metavar="DIR", nargs="+",
+                   help="these folders are 'not one of the cats' (e.g. discard M), learnt "
+                        "as one class that can never open a lid")
     p.add_argument("--labels", nargs="+", metavar="CAT",
                    help="train on only these subdirectories (the rest, e.g. discard "
                         "and unsorted, are not cats and must not become classes)")

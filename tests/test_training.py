@@ -162,3 +162,60 @@ def test_motion_detector_finds_an_intruding_blob():
     x, y, w, h = detection.bbox
     assert w > 50 and h > 40
     assert detection.crop(frame).shape[2] == 3
+
+
+def test_several_folders_can_mean_not_a_cat(tmp_path):
+    """discard (no cat) and M (several cats) are one class to a lid: do not open."""
+    from catbowl.recognizer import OTHER
+
+    root = write_cats(tmp_path / "collected")
+    sample = (root / sorted(COLOURS)[0] / "000.jpg").read_bytes()
+    for folder in ("discard", "M", "unclear"):
+        (root / folder).mkdir()
+        (root / folder / f"{folder}.jpg").write_bytes(sample)
+
+    dataset = load_dataset(root, sorted(COLOURS), ["discard", "M"])
+    assert dataset.counts()[OTHER] == 2, "both negative folders, and nothing from unclear"
+    assert "unclear" not in dataset.classes
+    assert load_dataset(root, sorted(COLOURS), "discard").counts()[OTHER] == 1
+
+
+def test_visits_are_grouped_by_time_across_folders():
+    from catbowl.presort import taken_at
+    from catbowl.training import visit_ids
+
+    names = ["bowl1-20260914-120000-000.jpg",   # one visit ...
+             "bowl1-20260914-120002-000.jpg",
+             "bowl1-20260914-120015-000.jpg",   # ... still, 13 s later
+             "bowl1-20260914-121000-000.jpg",   # ten minutes on: another
+             "000.jpg"]                         # no timestamp: on its own
+    ids = visit_ids(names, 20.0, taken_at)
+    assert ids[0] == ids[1] == ids[2]
+    assert len({ids[2], ids[3], ids[4]}) == 3
+
+
+def test_a_visit_is_never_on_both_sides_of_the_split(tmp_path, monkeypatch):
+    """Thirty frames of one visit are one sample, not thirty."""
+    import cv2
+    from sklearn.model_selection import GroupShuffleSplit
+
+    root = tmp_path / "collected"
+    for label, colour in COLOURS.items():
+        (root / label).mkdir(parents=True)
+        for visit in range(6):
+            for frame in range(5):
+                image = np.full((64, 64, 3), colour, dtype=np.uint8)
+                name = f"bowl1-2026091{visit}-{list(COLOURS).index(label):02d}00{frame:02d}-000.jpg"
+                cv2.imwrite(str(root / label / name), image)
+
+    seen = {}
+    real_split = GroupShuffleSplit.split
+
+    def spy(self, X, y=None, groups=None):
+        for train_index, test_index in real_split(self, X, y, groups):
+            seen["train"], seen["test"] = set(groups[train_index]), set(groups[test_index])
+            yield train_index, test_index
+
+    monkeypatch.setattr(GroupShuffleSplit, "split", spy)
+    train(root, RecognitionConfig(backend="mock"), out_path=None)
+    assert seen["test"] and not seen["train"] & seen["test"]
