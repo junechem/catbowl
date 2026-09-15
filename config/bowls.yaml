@@ -62,10 +62,16 @@ capture:
   interval_s: 2.0            # seconds between saved images, per bowl
   max_images: 5000           # stop before the SD card does
   save_frame: false          # true also keeps the whole frame beside each crop
-  # Buckets offered by the sorting page at http://<pi>:8080/sort. Each is a
-  # folder under `dir`. M is "more than one cat": no use for training a
-  # single-cat classifier, but kept rather than thrown away.
-  labels: [J, K, F]
+  # Buckets offered by the sorting page at http://<pi>:8080/sort and by /browse.
+  # Each is a folder under `dir`, beside `discard`, which is always offered:
+  #   discard - no cat at all: an empty scene, a hand, a blur
+  #   M       - more than one cat. The detector misses many crowds, so these
+  #             are meant to be trained as a "several cats" class of their own
+  #   unclear - one cat, but no marking to say whether it is F or J. Left out of
+  #             training: taught as "not a cat" they teach that F is junk
+  # Only folders named to `catbowl train` are trained, so M and unclear are
+  # ignored until they are asked for.
+  labels: [J, K, F, M, unclear]
 
 # Applied to every bowl, then overridden per bowl below.
 bowl_defaults:
