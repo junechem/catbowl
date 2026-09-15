@@ -71,11 +71,25 @@ whether or not the cat is still there. After the usual cooldown the bowl opens
 again as soon as a cat is detected and confirmed afresh — the cat does not have
 to go anywhere, it just has to be recognised again.
 
-Every detection also banks a photo in `data/collected/unsorted/` (`capture:` in
-the config). Sort them from the Pi itself at `http://<pi>:8080/sort` — one photo
-at a time, a button per label (`J`, `K`, `F`, `M` for more-than-one-cat), plus
-skip, junk and one step of undo; the keyboard shortcuts are the label letters,
-`x` for junk, `u` for undo and space to skip. Labelling is a file rename, the
+Every detection also banks a photo (`capture:` in the config). Once a
+classifier exists it is filed under the model's guess, in
+`data/collected/proposed/<J|K|F|discard|unsure>/`, and re-filed when the visit
+ends and all its frames can be judged together; before that, it lands in
+`data/collected/unsorted/`. Sort them from the Pi itself at
+`http://<pi>:8080/sort` (the unsorted queue) or `/browse` (any folder, including
+the proposals) — a button per bucket, plus skip, junk and one step of undo; the
+keyboard shortcuts are the label letters, `x` for junk, `u` for undo and space to
+skip. The buckets, as shipped:
+
+| bucket | what goes in it | trained as |
+| --- | --- | --- |
+| `J`, `K`, `F` | one cat, recognisably that cat | that cat |
+| `discard` ("junk") | no cat: an empty scene, a hand, a blur | not a cat |
+| `M` | more than one cat | not a cat |
+| `unclear` | one cat, but nothing shows which | left out |
+
+`unclear` is left out on purpose. A headless black body could be F or J, and
+teaching it as "not a cat" taught the model that F - who is all black - is junk. Labelling is a file rename, the
 page never polls, and photos are served straight off the disk, so sorting from
 the sofa costs the feeder almost nothing.
 
@@ -95,7 +109,7 @@ Nothing is ever deleted: "junk" is `data/collected/discard/`, not a bin.
 | `catbowl calibrate --bowl bowl1` | Walk a servo to angles you type, to find the end positions |
 | `catbowl import --src DIR --label mochi` | Crop cats out of existing photos into the dataset |
 | `catbowl capture --bowl bowl1` | Record labelled crops from the mounted camera |
-| `catbowl train` | Train the classifier, print a confusion matrix and a suggested threshold |
+| `catbowl train` | Train the classifier, print a confusion matrix and a suggested threshold. For this rig: `train --data data/collected --labels J K F --negative discard M` |
 | `catbowl eval` | Score a trained classifier and list what it got wrong |
 | `catbowl selftest` | Full pipeline on synthetic cameras and simulated lids |
 

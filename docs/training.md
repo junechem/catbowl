@@ -171,17 +171,41 @@ frame, but nothing is labelled for you: before a classifier exists the rig has n
 honest way to know, and folders named by a guess are worse than no folders.
 
 After a week, file them: open `http://<pi>:8080/sort` on a phone and give each
-photo a bucket (`capture.labels`, `J`/`K`/`F`/`M` as shipped, where M is
-more-than-one-cat). They land in `data/collected/<label>/`, and photos worth
-nothing go to `data/collected/discard/` - a folder, not a delete, because an
-empty-bowl frame is exactly what a later model needs to learn to refuse.
+photo a bucket (`capture.labels`, `J`/`K`/`F`/`M`/`unclear` as shipped). They
+land in `data/collected/<label>/`, and photos with no cat in them go to
+`data/collected/discard/` - a folder, not a delete, because an empty-bowl frame
+is exactly what a later model needs to learn to refuse.
+
+Keep three kinds of "not useful" apart, because they want different training:
+
+- **`discard`** - no cat at all. Trained as "not a cat".
+- **`M`** - more than one cat. Also trained as "not a cat", and it matters: the
+  detector's crowd count misses most crowds, so the classifier refusing a
+  two-cat crop is what actually keeps the lid down.
+- **`unclear`** - one cat, too little of it to say which. **Not trained.**
+  Filed under "not a cat", these teach the model that whatever the cats share
+  is junk; on this rig that was F's all-black body, and F's recognition
+  suffered for it. Left out, the model simply hedges on such a frame, which at
+  the bowl means no decision until a better frame arrives.
+
+On 2026-09-14 splitting the old mixed `discard` pile this way (it turned out to
+be 378 no-cat, 276 crowd and 890 unclear) raised F from 65% to 75% of visits.
+
+```
+python -m catbowl train --data data/collected --labels J K F --negative discard M
+```
+
+`train` scores itself on whole held-out visits - the rig captures every two
+seconds, so a visit is dozens of near-identical frames, and splitting them one
+photo at a time once made an 81% model report 90% - then refits the saved model
+on every photo. `tools/threshold_report.py` gives the per-visit view: how often
+a cat walking up gets its lid opened, and how often the wrong cat does.
 
 Got one wrong? `http://<pi>:8080/browse` lists any bucket newest-first - a
 mistake is nearly always one just made, so it is in the top-left corner - and a
 tap moves it to another bucket or back into the sorting queue.
 
-Then move the buckets you want to train on into `data/crops/<cat>/` and retrain. This is where most of the eventual
-accuracy comes from.
+This is where most of the eventual accuracy comes from.
 
 `--collect` is the older, narrower version of the same idea: it saves only the
 crop behind each state change, filed under whatever the classifier decided. It is

@@ -16,22 +16,22 @@ A classifier now exists, trained from the photos the rig banked and a human
 sorted: **J 1206, K 815, F 958**, and two folders learnt together as "not a
 cat": **`discard` 378** (no cat) and **`M` 276** (several cats). A third,
 **`unclear` 890** (a cat, but F or J cannot be told), is kept and not trained.
-Retrained 2026-09-14 on the desktop rather than the Pi - forty seconds instead of seven
-minutes, and the Pi only receives the finished `models/classifier.joblib`). The
-discards are learnt as a negative class (`_other`, "none of the cats") rather
+Retrained 2026-09-14 on the desktop rather than the Pi - forty seconds instead
+of seven minutes, and the Pi only receives the finished
+`models/classifier.joblib`. The negatives are learnt as a negative class (`_other`, "none of the cats") rather
 than as a fourth cat, so a lid can never open for one.
 
 `catbowl train` now reports **85.2%**, and since 2026-09-14 that number is
 honest: it holds out whole visits, keeps each mirrored copy with its original,
-and then refits the saved model on every photo. Before that date it split its test set one photo at a time, and the rig captures
-every two seconds, so a visit leaves thirty near-identical frames with some in
+and then refits the saved model on every photo. Before that date it split its
+test set one photo at a time, and the rig captures every two seconds, so a visit leaves thirty near-identical frames with some in
 training and the rest in test - the model was scored on photos it had all but
 memorised. Augmentation also runs before the split, so a photo's mirror could
 sit in training while the original was tested.
 
 `tools/threshold_report.py` splits by *visit* instead, drops the augmentation,
-and reports what a cat walking up actually experiences. Run it on the Pi; it
-caches its embeddings, so only the first run costs seven minutes.
+and reports what a cat walking up actually experiences. Run it on the desktop
+mirror; it caches its embeddings, so only new photos are embedded.
 
     honest accuracy, no floor: 81.4%
     at min_confidence 0.85: 51.5% of frames accepted, 95.6% of those correct
@@ -45,7 +45,7 @@ caches its embeddings, so only the first run costs seven minutes.
 Visits are grouped by time alone since 2026-09-14, whatever folder their
 frames were filed in, so these are not directly comparable with the rows
 below. The like-for-like comparison of the re-sort, same visits and same
-folds for each (`resort_ablation.py`, per visit at 0.85):
+folds for each (`tools/resort_ablation.py`, per visit at 0.85):
 
     what "not a cat" was trained on       F      J      K   junk  crowd opens
     discard + M + unclear (before)      64.8   63.4   89.2   4.3     33.3
@@ -62,7 +62,9 @@ The history, per visit (K / J / F):
 
     2026-09-13 am   3589 photos   88.9 / 64.5 / 54.4   raw 80.6%
     2026-09-13 pm   4153 photos   90.4 / 57.9 / 59.7   raw 75.4%
-    2026-09-14      4434 photos   88.4 / 59.2 / 61.0   raw 76.9%
+    2026-09-14 am   4434 photos   88.4 / 59.2 / 61.0   raw 76.9%
+    2026-09-14 pm   3633 trained  89.3 / 62.1 / 69.9   raw 81.4%  (re-sorted;
+                    visits now grouped by time, so a slightly different count)
 
 Between the first two runs: **F improved by five points and J lost seven.** The raw
 number fell too, which is what a harder and more varied test set looks like
@@ -70,12 +72,11 @@ rather than a worse model - the added photos come mostly from the new wide
 crops, so the model is now being asked a fairer question. The wrong-cat rate
 fell everywhere.
 
-K works. J and F are both mediocre, and now mediocre in the same way: their
-failures are silence, not confusion with each other (F called another cat in 6
-frames of 929, J in 8 of 1187). Both still lose most of their misses to
-`_other` - see below.
+K works. F and J are now held back by each other rather than by the junk pile:
+since the re-sort, a missed F frame is far more often called J than "not a
+cat" - see The F problem.
 
-Everything lives on the Pi under `data/collected/`, which is gitignored: the
+Everything lives on the Pi under `data/collected/`, which is gitignored, so
 no git operation can touch the photos. The Pi's copy is the master; the desktop
 holds an rsync mirror for training. The rig
 files each new photo it takes into `proposed/<its guess>`, so the review queue
@@ -153,74 +154,85 @@ nothing.
 
 ## The F problem
 
-F is recognised in 28% of its frames, and the bowl fails to open for F in
-**38% of its visits**. The cause is not what it first looks like.
+F used to open the bowl in barely half its visits. The cause was not a
+shortage of photos and not, mainly, confusion with J: F's misses landed on
+`_other`. The model had learnt that F looks like *junk*, and it learnt it from
+the labels.
 
-F's errors do not land on J. They land on `_other` - the model has learnt that F
-looks like *junk*, and it learnt that from the labels. F is all black; J has a
-white neck and white feet. A tight crop that loses the head and feet leaves a
-black shape that could be either, so it gets filed in `discard` - and it is
-disproportionately F that gets filed that way, because for J a glimpse of white
-settles it. The training set therefore says "black shape with no white = not a
-cat", which is exactly what the model now believes.
+F is all black; J has a white neck and white feet. A crop that loses the head
+and feet leaves a black shape that could be either, and those were filed in
+`discard` - disproportionately F's, because for J a glimpse of white settles
+it. So the training set said "black shape with no white = not a cat".
 
-That is a **labelling feedback loop**, not a shortage of data and not, mainly, a
-confusion between two cats. Three things bear on it:
+**Fixed on 2026-09-14 by splitting the discard pile** into what it actually
+held: 378 photos with no cat (`discard`), 276 with several (`M`) and 890 of
+one cat that could not be named (`unclear`). `unclear` is no longer trained at
+all, and F went from 64.8% to 74.6% of visits on the same folds (about 83% on
+well-cropped visits). F's misses now land on J rather than on junk - the
+confusion matrix moved from 36-to-junk to 36-to-J out of 171 - which is the
+honest version of the problem: two cats that genuinely look alike from behind.
+
+Two other things bore on it and still do:
 
 - **Crops were fixed in commit `38ebc5d`, dated 2026-09-09 - but that is the
   commit date, not the deploy date.** The Pi's reflog shows its checkout sat on
   a 2026-09-03 commit until it was pulled forward at **2026-09-12 21:00**, and
-  the photos agree: crop sizes step up sharply between the evening of the 12th
-  and the morning of the 13th (the fraction of tiny crops, under 40k px, falls
-  from ~13% to under 1%). So the well-cropped photos are **599 of 4153, 14% of
-  the set, almost all taken on 2026-09-13** - one day, not a week.
+  the photos agree: the fraction of tiny crops (under 40k px) falls from ~13% to
+  under 1% overnight. Verify such things the same way rather than trusting a
+  commit date: `git reflog --date=iso` on the Pi, against crop areas by hour.
+- **Old crops still help, for now.** Tested on well-cropped visits, a model
+  trained on only the new crops did worse than one trained on everything (F
+  72% vs 90%, J 38% vs 71%); putting K's old photos back recovered K but not F
+  or J. There are too few new crops to stand alone. Re-run the comparison
+  when the new crops roughly equal the old.
 
-  Per folder, new crops / old: F 144/710, J 174/900, K 80/718,
-  discard 201/1226. Verify this the same way rather than trusting a commit
-  date: `git reflog --date=iso` on the Pi, against crop areas by capture hour.
-- **Judging a visit rather than a frame breaks the loop**, because a visit where
-  the feet show in a few frames can name the headless frames beside them. This
-  is what `presort` does in batch and what the rig now does live.
-- **Adding well-cropped photos helped, and there are barely any yet.** The
-  2026-09-13 retrain added 564 photos and moved F from 54.4% to 59.7% of
-  visits - and only 144 of F's 854 photos are actually new crops. Five points
-  from a 17% transfusion is a good sign, not a small one. The plan stands:
-  keep collecting, then *replace* the old F and `discard` photos rather than
-  only adding to them.
-
-While waiting, **`proposed/discard` is the tab that needs a human most**. The
-model will keep filing F there, and accepting those proposals unchecked would
-teach the next model the same bias from its own mistakes.
+Keep `proposed/discard` and `proposed/unsure` honest when reviewing: a
+headless black cat belongs in `unclear`, not in `discard`.
 
 ## What is running right now
 
-- Service `catbowl` on the Pi, in recognition mode (no `--no-model`).
-- `min_confidence: 0.85`, `open_votes: 1`, ration 60s/hour for J and F
-  (halved from 120s on 2026-09-13).
-- Classifier trained on `J K F` with `--negative discard M` (2026-09-14).
+- Service `catbowl` on the Pi, in recognition mode.
+- Classifier trained 2026-09-14 on `J K F` with `--negative discard M`;
+  `unclear` left out. Honest score 85.2% (held-out visits); per visit at 0.85:
+  K 89%, J 62%, F 70%, junk 8%.
+- `min_confidence: 0.85`, `open_votes: 1`.
+- Rations: J and F 60s of open lid per rolling hour (halved from 120s on
+  2026-09-13). K has none.
 - `max_open_s: 30` for J and F. K is `uncapped` (2026-09-14): her lid stays up
   until she leaves or another cat arrives.
-- Every capture filed into `data/collected/proposed/<guess>`; visits settled
-  live when they end.
-- The old cats-only classifier is kept at `~/classifier-catsonly.joblib`, and a
-  duplicate photo removed on 2026-09-13 is at `~/duplicates-removed/`.
+- Servo: channel 1, closed 175 degrees, open 65.
+- Sort buckets: `J K F M unclear` plus `discard`. Every capture is filed into
+  `data/collected/proposed/<guess>`; visits are settled live when they end.
+- Pi health (2026-09-14, `scripts/install_pi_health.sh`): the journal is kept
+  on disk, Wi-Fi power saving is off, and `netmon` logs reachability, power,
+  temperature and memory to `~/netmon.log` every 15s.
+- Backups on the Pi: `~/classifier-catsonly.joblib` (first model),
+  `~/classifier-2026-09-06.joblib`, `~/classifier-2026-09-13.joblib` and
+  `~/classifier-2026-09-14am.joblib` (the ones each retrain replaced), and a
+  duplicate photo removed on 2026-09-13 in `~/duplicates-removed/`.
 
 ## Next steps
 
-1. **Keep collecting.** Let it run and check the proposal tabs,
-   `proposed/discard` first. A week added 564 photos and five points of F.
-2. **Watch out for `capture.max_images` (5000)**, which counts everything
-   unfiled - `unsorted/` plus every `proposed/` folder. Hit it and the rig stops
-   banking photos silently.
-3. **Replace the old F and discard photos** with the new well-cropped ones -
-   deleting, not just adding. The cutoff in the filename timestamps is
-   **2026-09-12 21:00**, not the 9th: that leaves 710 old photos in `F/`, 1226
-   in `discard/`, 900 in `J/` and 718 in `K/`. J losing seven points in the
-   retrain says the old crops hurt it too. There is not yet enough new material
-   to replace them with - this is the week of collecting, starting now.
-4. **Retrain**, then re-run `tools/threshold_report.py` and compare the per-visit
-   table above. That table, not `train`'s accuracy, is the measure of progress.
-5. **Build bowls 2 and 3**, and give J and F their own, at which point the
+1. **Watch F and J's meals.** 7% of J's visits now open under F's name, which
+   spends F's minute on J. The events log (`logs/events-*.jsonl`) shows who
+   each lid opened for; if F keeps running out of ration, this is why.
+2. **Keep sorting**, `proposed/unsure` and `proposed/discard` first, into the
+   five buckets. `M` is the thinnest class that matters (276 photos, 36
+   visits); more crowds make the refusal numbers trustworthy.
+3. **If the Pi drops off the network again**, note the time and read
+   `~/netmon.log` and `journalctl -b -1` around it. `net=FAIL` with the Pi still
+   up is a network stall; a gap in the log is a crash or a hang.
+4. **Watch `capture.max_images` (5000)**, which counts `unsorted/` plus every
+   `proposed/` folder. Hit it and the rig stops banking photos silently.
+5. **Retrain** on the desktop (commands under Reference) and compare the
+   per-visit table. Re-run the old-vs-new crop comparison once the new crops
+   roughly equal the old, and prune the old ones only if it says so.
+6. **Consider a crowd class.** Training `M` as its own class (not "not a cat")
+   was measured: it refuses more crowds (19% open vs 25%) and can close an open
+   lid on about half of them - the only defence if a cat joins K at her
+   uncapped lid - at a cost of five points of F. Not chosen on 2026-09-14,
+   because F needed the help more.
+7. **Build bowls 2 and 3**, and give J and F their own, at which point the
    rations can go.
 
 ## Time, and the four places it is used
@@ -266,6 +278,14 @@ obvious next refinement once the model is trusted.
 - **The status page has no authentication.** `POST /control` moves a physical
   lid and `/sort/*` files photos, for anyone on the wi-fi. A deliberate
   home-LAN trade-off; do not port-forward it. `status_port: null` disables it.
+- **The Pi went off Wi-Fi repeatedly** (through 2026-09-14), sometimes
+  needing a reboot. The logs from those crashes were lost - Raspberry Pi OS
+  keeps the journal in memory - so the cause is not proven. What was seen:
+  strong signal (-55 dBm), never throttled, 50 degrees C, plenty of memory, and
+  no Wi-Fi disconnect in the Pi's own log while `rjwpi.local` stopped
+  resolving. That is the signature of the brcmfmac chip's power saving, which
+  was on; it is now off. The journal is now kept and `netmon` is running, so
+  a recurrence will leave a record.
 - **Unclear frames still happen at the bowl.** `unclear/` is left out of
   training, not out of the world. Shown one, the model hedges between F and J;
   mostly that stays under 0.85 and does nothing (no open, no close), and the
@@ -279,6 +299,8 @@ obvious next refinement once the model is trusted.
 
 - **The Pi:** `rjwpi.local` / 192.168.1.241, project at
   `~/Projects/0001_Catbowl`, service `catbowl`, status page on port 8080.
+- **Pi health:** `scripts/install_pi_health.sh` reinstalls the journal,
+  Wi-Fi and `netmon` fixes (files in `pi/` and `systemd/netmon.service`).
 - **Commands** (from the project dir, `catbowl` is not on PATH):
 
       .venv/bin/python -m catbowl --config config/bowls.yaml doctor
@@ -292,4 +314,24 @@ obvious next refinement once the model is trusted.
 
 - **Wiring:** PCA9685 VCC to Pi pin 1 (3.3V), SDA pin 3, SCL pin 5, GND pin 6.
   Servo power from the 5V supply on the 6-pin header, not the screw terminal.
-  bowl1's servo is on channel 1, closed 170 degrees, open 85.
+  bowl1's servo is on channel 1, closed 175 degrees, open 65.
+
+## Log
+
+**2026-09-13.** Multi-cat frames refused (`_crowd` from the detector's count).
+Live self-sorting into `proposed/<guess>`, settled per visit. Opening on one
+confident frame (`open_votes: 1`). One bowl for all three cats with rolling
+rations, 120s/hour for J and F. Discard trained as a negative class.
+`threshold_report.py` written: the first honest score (80.6%, not 90.4%).
+Retrained that evening on 4153 photos; rations halved to 60s/hour. Found that
+the crop fix reached the Pi on the 12th, not the 9th.
+
+**2026-09-14.** Retrained on 4434 photos. K made `uncapped`. A visit settled
+as `_other` was being filed into `proposed/_other`; now `proposed/discard`.
+Measured old vs new crops (keep the old, for now). Added `M` and `unclear`
+buckets; the discard pile was re-sorted by hand into 378 / 276 / 890; four
+ways of training them compared, and "discard + M as not-a-cat, unclear left
+out" chosen and deployed (F 65% -> 75% of visits). `train` now splits by
+visit, keeps mirrors with their originals and refits on every photo. The Pi's
+Wi-Fi drops investigated: journal made persistent, `netmon` installed, power
+saving turned off.

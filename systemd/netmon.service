@@ -1,0 +1,10 @@
+[Unit]
+Description=log network reachability, power, temperature and memory every 15s
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/netmon.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
