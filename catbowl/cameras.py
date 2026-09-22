@@ -80,9 +80,16 @@ class PiCameraCapture(_Capture):
         from picamera2 import Picamera2
 
         self.cam = Picamera2(camera_num=index)
+        controls = {"FrameRate": float(fps)}
+        if "AfMode" in self.cam.camera_controls:
+            # Camera Module 3: keep refocusing. Left alone its lens sits at a
+            # fixed far focus, which blurs a cat half a metre away.
+            from libcamera import controls as lc
+
+            controls["AfMode"] = lc.AfModeEnum.Continuous
         cfg = self.cam.create_video_configuration(
             main={"size": (width, height), "format": "RGB888"},
-            controls={"FrameRate": float(fps)},
+            controls=controls,
         )
         self.cam.configure(cfg)
         self.cam.start()
