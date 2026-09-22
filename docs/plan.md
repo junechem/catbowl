@@ -193,9 +193,10 @@ headless black cat belongs in `unclear`, not in `discard`.
 ## What is running right now
 
 - Service `catbowl` on the Pi, in recognition mode.
-- Classifier trained 2026-09-14 on `J K F` with `--negative discard M`;
-  `unclear` left out. Honest score 85.2% (held-out visits); per visit at 0.85:
-  K 89%, J 62%, F 70%, junk 8%.
+- Classifier trained 2026-09-22 on `J K F` with `--negative discard M`
+  (4129 photos); `unclear` left out. Honest score 85.2% (held-out visits);
+  per visit at 0.85: K 90%, J 63%, F 72%, junk 9%. J opening under F's name
+  down from 7% to 5% of J's visits.
 - `min_confidence: 0.85`, `open_votes: 1`.
 - Rations: J and F 60s of open lid per rolling hour (halved from 120s on
   2026-09-13). K has none.
@@ -214,7 +215,7 @@ headless black cat belongs in `unclear`, not in `discard`.
   temperature and memory to `~/netmon.log` every 15s.
 - Backups on the Pi: `~/classifier-catsonly.joblib` (first model),
   `~/classifier-2026-09-06.joblib`, `~/classifier-2026-09-13.joblib` and
-  `~/classifier-2026-09-14am.joblib` (the ones each retrain replaced), and a
+  `~/classifier-2026-09-14am.joblib`, `~/classifier-2026-09-22.joblib` (the ones each retrain replaced), and a
   duplicate photo removed on 2026-09-13 in `~/duplicates-removed/`.
 
 ## Next steps
@@ -354,3 +355,5 @@ cat: on 20 minutes of live frames ssdlite found the cat in 47 of 94 frames
 in 261 empty frames for any of them. Switched to YOLO11n 640 (0.6s a check on
 the Pi, against ssdlite's 0.7s). Still open: the gate only asks the detector
 when something moves, so a cat sitting perfectly still is not looked for.
+Retrained on 4129 photos (J 1402, K 836, F 1093, M 360, discard 438; unclear
+965 left out): F 72%, J 63%, K 90% of visits, junk 9%.
