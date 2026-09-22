@@ -8,7 +8,8 @@ place most of this is written down.
 
 The hardware works. One bowl is live (`bowl1`): a cardboard disc lying on the
 bowl, turned aside by a single servo on PCA9685 channel 1, now glued to the lid
-rather than taped. The camera is a Logitech Brio 100 on USB. The status page
+rather than taped. The camera is a Camera Module 3 Wide (imx708, 120 degrees) on the ribbon
+cable, since 2026-09-22; the Logitech Brio 100 webcam before it is removed. The status page
 serves the live view, the sorting queue and the browser at
 `http://rjwpi.local:8080/`.
 
@@ -201,6 +202,9 @@ headless black cat belongs in `unclear`, not in `discard`.
 - `max_open_s: 30` for J and F. K is `uncapped` (2026-09-14): her lid stays up
   until she leaves or another cat arrives.
 - Servo: channel 1, closed 175 degrees, open 65.
+- Camera: `csi:0` at 1280x720 through picamera2. The venv is built with
+  `--system-site-packages`, because picamera2 only comes from apt. The model
+  was trained on webcam photos only.
 - Sort buckets: `J K F M unclear` plus `discard`. Every capture is filed into
   `data/collected/proposed/<guess>`; visits are settled live when they end.
 - Pi health (2026-09-14, `scripts/install_pi_health.sh`): the journal is kept
@@ -213,6 +217,9 @@ headless black cat belongs in `unclear`, not in `discard`.
 
 ## Next steps
 
+0. **Retrain on Pi-camera photos.** The new camera sees wider, with other
+   colours, than the webcam every training photo came from, so recognition may
+   be worse until a few days of its photos are sorted and trained on.
 1. **Watch F and J's meals.** 7% of J's visits now open under F's name, which
    spends F's minute on J. The events log (`logs/events-*.jsonl`) shows who
    each lid opened for; if F keeps running out of ration, this is why.
@@ -265,7 +272,7 @@ obvious next refinement once the model is trusted.
 
 ## Known problems
 
-- **The camera drops off USB when the servo moves.** Seen on 2026-09-12: the
+- **The camera dropped off USB when the servo moved** (webcam, now replaced). Seen on 2026-09-12: the
   lid opened, the kernel logged `USB disconnect` and then `error -71` in a loop,
   and the camera did not come back until it was replugged. `vcgencmd
   get_throttled` was `0x0`, so the Pi itself was not browning out. Hardware
@@ -335,3 +342,7 @@ out" chosen and deployed (F 65% -> 75% of visits). `train` now splits by
 visit, keeps mirrors with their originals and refits on every photo. The Pi's
 Wi-Fi drops investigated: journal made persistent, `netmon` installed, power
 saving turned off.
+
+**2026-09-22.** Webcam replaced by a Camera Module 3 Wide on the ribbon;
+`bowl1` now uses `csi:0` at 1280x720, and the Pi's venv was switched to see
+system packages so it can import picamera2.
