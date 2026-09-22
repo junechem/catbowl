@@ -29,6 +29,15 @@ detector:
   pad_frac: 0.15
   warmup_frames: 30              # frames spent learning the empty scene at startup
   score_threshold: 0.5           # how sure ssdlite must be that it is a cat
+  # The detector that answers "is it a cat". yolo (YOLO11n exported to ONNX at
+  # 640px) replaced ssdlite on 2026-09-22: on 20 minutes of live Pi-camera
+  # frames it found the cat in 93 of 94 frames against ssdlite's 47 - mostly F,
+  # black and head-down, which ssdlite loses - with no false alarms in 261 empty
+  # frames, and at 0.6s a check it is still cheaper than ssdlite's 0.7s.
+  # Export: `yolo export model=yolo11n.pt format=onnx imgsz=640` (ultralytics,
+  # on the desktop), then copy the .onnx into models/ on the Pi.
+  model: yolo
+  yolo_path: models/yolo11n-640.onnx
   confirm_every_s: 2.0           # how often ssdlite is re-asked during a visit
   reject_backoff_s: 1.0          # how long a "not a cat" suppresses re-checking
   # A cat eating has its face in the bowl and does not look like a cat to a

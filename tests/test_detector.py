@@ -5,6 +5,8 @@ records how often it was asked, because how often it runs is the whole point of
 the hybrid.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -334,3 +336,20 @@ def test_the_count_drops_back_when_the_second_cat_leaves():
     confirm.result = IS_CAT           # one of them wandered off
     clock.advance(2.5)
     assert gate.detect(FRAME).crowd == 1
+
+
+def test_detector_model_must_be_one_we_can_build():
+    with pytest.raises(ConfigError, match="ssdlite/yolo"):
+        DetectorConfig(model="yolov99")
+
+
+YOLO_320 = Path(__file__).resolve().parents[1] / "models" / "yolo11n-320.onnx"
+
+
+@pytest.mark.skipif(not YOLO_320.exists(), reason="YOLO11n ONNX export not present")
+def test_yolo_finds_nothing_in_a_blank_frame_and_keeps_its_box_in_the_frame():
+    from catbowl.detector import YoloCatDetector
+
+    det = YoloCatDetector(DetectorConfig(model="yolo", yolo_path=str(YOLO_320)))
+    assert det.size == 320
+    assert det.detect(np.full((720, 1280, 3), 128, np.uint8)) is None

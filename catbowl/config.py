@@ -202,6 +202,11 @@ class DetectorConfig:
     type: str = "hybrid"          # hybrid | motion | ssdlite | none
     min_area_frac: float = 0.02   # ignore blobs smaller than this share of the frame
     score_threshold: float = 0.5  # ssdlite and hybrid only
+    # Which object detector answers "is that a cat": ssdlite (torchvision's
+    # smallest) or yolo, an ONNX export of YOLO11n run through OpenCV. yolo is
+    # far more accurate, black cats especially, and needs the file at yolo_path.
+    model: str = "ssdlite"
+    yolo_path: str = "models/yolo11n-640.onnx"
     pad_frac: float = 0.15        # grow the box before cropping, to catch ears/whiskers
     warmup_frames: int = 30       # motion only: frames spent learning the empty scene
     # hybrid only: how long a "yes, that is a cat" answer stays good before the
@@ -222,6 +227,8 @@ class DetectorConfig:
             raise ConfigError(
                 f"detector.type must be hybrid/motion/ssdlite/none, got {self.type!r}"
             )
+        if self.model not in ("ssdlite", "yolo"):
+            raise ConfigError(f"detector.model must be ssdlite/yolo, got {self.model!r}")
         for name in ("confirm_every_s", "reject_backoff_s",
                      "confirm_grace_s", "visit_gap_s"):
             if getattr(self, name) < 0:

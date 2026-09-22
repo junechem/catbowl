@@ -187,6 +187,72 @@ class SsdliteCatDetector(Detector):
         return replace(best, crowd=crowd)
 
 
+class YoloCatDetector(Detector):
+    """YOLO11n, exported to ONNX and run by OpenCV's dnn module, filtered to cats.
+
+    Twice ssdlite's cost and far better at the job: COCO mAP 39 against 21, and
+    it is the dark, low-contrast cat that the small detector loses first. The
+    ONNX file is exported once on a workstation (`yolo export model=yolo11n.pt
+    format=onnx imgsz=320`) so the Pi needs neither ultralytics nor torch for it.
+    """
+
+    CAT = 15                  # "cat" among YOLO's 80 COCO classes
+    NMS_IOU = 0.45
+
+    def __init__(self, cfg: DetectorConfig):
+        import cv2
+
+        self._cv2 = cv2
+        self.cfg = cfg
+        self.net = cv2.dnn.readNetFromONNX(cfg.yolo_path)
+        # The input side is fixed at export time; read it off the model's name
+        # rather than trusting a second setting to agree with it.
+        digits = "".join(c for c in cfg.yolo_path.rsplit("-", 1)[-1] if c.isdigit())
+        self.size = int(digits) if digits else 320
+
+    def detect(self, image: np.ndarray) -> Detection | None:
+        cv2 = self._cv2
+        H, W = image.shape[:2]
+        # Letterbox: scale the long side to the input and pad the rest, so the
+        # cat is not squashed out of the shape YOLO was trained on.
+        scale = self.size / max(H, W)
+        w, h = round(W * scale), round(H * scale)
+        canvas = np.full((self.size, self.size, 3), 114, np.uint8)
+        top, left = (self.size - h) // 2, (self.size - w) // 2
+        canvas[top:top + h, left:left + w] = cv2.resize(image, (w, h), interpolation=cv2.INTER_AREA)
+        blob = cv2.dnn.blobFromImage(canvas, 1 / 255.0, swapRB=True)
+        self.net.setInput(blob)
+        out = self.net.forward()[0]           # (84, N): cx, cy, w, h, then 80 class scores
+
+        scores = out[4 + self.CAT]
+        keep = scores >= self.cfg.score_threshold
+        if not keep.any():
+            return None
+        cx, cy, bw, bh = out[:4, keep]
+        scores = scores[keep]
+        x0 = (cx - bw / 2 - left) / scale
+        y0 = (cy - bh / 2 - top) / scale
+        boxes = np.stack([x0, y0, bw / scale, bh / scale], axis=1)
+        picked = cv2.dnn.NMSBoxes(boxes.tolist(), scores.tolist(),
+                                  self.cfg.score_threshold, self.NMS_IOU)
+        picked = np.asarray(picked).reshape(-1)
+        if not len(picked):
+            return None
+        best = int(picked[np.argmax(scores[picked])])
+        x, y, bw_, bh_ = boxes[best]
+        x0_, y0_ = max(0, int(x)), max(0, int(y))
+        x1_, y1_ = min(W, int(x + bw_)), min(H, int(y + bh_))
+        return Detection((x0_, y0_, x1_ - x0_, y1_ - y0_), float(scores[best]), "yolo",
+                         crowd=len(picked))
+
+
+def build_cat_detector(cfg: DetectorConfig) -> Detector:
+    """The object detector named by ``cfg.model``: ssdlite or yolo."""
+    if cfg.model == "yolo":
+        return YoloCatDetector(cfg)
+    return SsdliteCatDetector(cfg)
+
+
 class HybridCatDetector(Detector):
     """Motion triggers; ssdlite decides whether it was a cat.
 
@@ -227,7 +293,7 @@ class HybridCatDetector(Detector):
 
     def _detector(self) -> Detector:
         if self._confirm is None:
-            self._confirm = SsdliteCatDetector(self.cfg)
+            self._confirm = build_cat_detector(self.cfg)
         return self._confirm
 
     def detect(self, image: np.ndarray) -> Detection | None:
@@ -308,7 +374,7 @@ def build_detector(cfg: DetectorConfig) -> Detector:
     if cfg.type == "none":
         return NullDetector()
     if cfg.type == "ssdlite":
-        return SsdliteCatDetector(cfg)
+        return build_cat_detector(cfg)
     if cfg.type == "hybrid":
         return HybridCatDetector(cfg)
     return MotionDetector(cfg)

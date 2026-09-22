@@ -204,7 +204,9 @@ headless black cat belongs in `unclear`, not in `discard`.
 - Servo: channel 1, closed 175 degrees, open 65.
 - Camera: `csi:0` at 1280x720 through picamera2. The venv is built with
   `--system-site-packages`, because picamera2 only comes from apt. The model
-  was trained on webcam photos only.
+  was trained on webcam photos only. Continuous autofocus is on.
+- Cat detector: YOLO11n at 640px (`detector.model: yolo`, the ONNX file in
+  `models/`, not in git), replacing ssdlite on 2026-09-22.
 - Sort buckets: `J K F M unclear` plus `discard`. Every capture is filed into
   `data/collected/proposed/<guess>`; visits are settled live when they end.
 - Pi health (2026-09-14, `scripts/install_pi_health.sh`): the journal is kept
@@ -346,3 +348,9 @@ saving turned off.
 **2026-09-22.** Webcam replaced by a Camera Module 3 Wide on the ribbon;
 `bowl1` now uses `csi:0` at 1280x720, and the Pi's venv was switched to see
 system packages so it can import picamera2.
+Continuous autofocus turned on. F sitting at the bowl was not being seen as a
+cat: on 20 minutes of live frames ssdlite found the cat in 47 of 94 frames
+(mostly F, head-down), YOLO11n at 320px 69, at 640px 93, with no false alarms
+in 261 empty frames for any of them. Switched to YOLO11n 640 (0.6s a check on
+the Pi, against ssdlite's 0.7s). Still open: the gate only asks the detector
+when something moves, so a cat sitting perfectly still is not looked for.
