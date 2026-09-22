@@ -7,7 +7,7 @@ cd "$HERE"
 
 echo "==> System packages"
 sudo apt-get update
-sudo apt-get install -y python3-venv python3-dev i2c-tools v4l-utils
+sudo apt-get install -y python3-venv python3-dev i2c-tools v4l-utils python3-picamera2
 
 # A tuned BLAS for numpy. Trixie (Raspberry Pi OS 13) dropped ATLAS entirely,
 # so prefer OpenBLAS and keep the ATLAS line only for older images. Neither is
@@ -19,7 +19,9 @@ if ! sudo apt-get install -y libopenblas-dev 2>/dev/null; then
 fi
 
 echo "==> Python environment"
-python3 -m venv .venv
+# --system-site-packages: picamera2 (the ribbon camera) only comes from apt and
+# cannot be pip-installed. Packages pip puts in the venv still take precedence.
+python3 -m venv --system-site-packages .venv
 ./.venv/bin/pip install --upgrade pip
 
 # torch first, and explicitly from PyTorch's CPU index.

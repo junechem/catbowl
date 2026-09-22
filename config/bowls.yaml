@@ -144,7 +144,7 @@ bowls:
       J: 60         # seconds of open lid per hour. `J: {seconds: 60, per_s: 3600}` in full
       F: 60
     uncapped: [K]   # max_open_s does not apply: the lid stays up while K is there
-    camera: {device: 0}
+    camera: {device: "csi:0", width: 1280, height: 720}   # Camera Module 3 Wide on the ribbon
     servo: {channel: 1, closed_deg: 175, open_deg: 65, detach_when_idle: true}
 
   # Placeholders for bowls that do not exist yet. The names are ignored while
