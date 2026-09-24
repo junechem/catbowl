@@ -361,3 +361,12 @@ Retrained on 4129 photos (J 1402, K 836, F 1093, M 360, discard 438; unclear
 **2026-09-24.** Retrained on 4872 photos with `--negative discard` only (M left
 out of training): F 73%, J 64%, K 90% of visits; junk 3%; J opens as another
 cat 9% (was 5%). Previous model backed up as `~/classifier-2026-09-24.joblib`.
+
+Switched to a model trained on Pi-camera photos only (since 2026-09-22 09:48;
+J K F + discard, no M, no unclear) at `min_confidence: 0.75`: per visit F 75%
+(3% wrong cat), J 64% (5%), K 89%, empty 9% (3 of 34). Scored on the same
+Pi-camera visits, the all-photos model at 0.85 gave F 64%, J 48% (9% wrong).
+Nightly retrain installed: `catbowl-train.timer` runs `tools/nightly_train.py`
+at 00:00, retrains only if the sorted Pi-camera set changed, backs up to
+`models/backups/`, logs scores to `models/history.json` (shown on the status
+page) and restarts catbowl. About 6 minutes on the Pi.
