@@ -357,3 +357,7 @@ the Pi, against ssdlite's 0.7s). Still open: the gate only asks the detector
 when something moves, so a cat sitting perfectly still is not looked for.
 Retrained on 4129 photos (J 1402, K 836, F 1093, M 360, discard 438; unclear
 965 left out): F 72%, J 63%, K 90% of visits, junk 9%.
+
+**2026-09-24.** Retrained on 4872 photos with `--negative discard` only (M left
+out of training): F 73%, J 64%, K 90% of visits; junk 3%; J opens as another
+cat 9% (was 5%). Previous model backed up as `~/classifier-2026-09-24.joblib`.
