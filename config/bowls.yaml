@@ -9,7 +9,7 @@ recognition:
   input_size: 224
   # Below this confidence a frame counts as "unknown" and no lid moves.
   # `catbowl train` prints a suggested value - start there.
-  min_confidence: 0.85
+  min_confidence: 0.75           # 0.85 until 2026-09-24; 0.75 with the Pi-camera-only model
   # A lid only moves when votes_required of the last vote_window frames agree.
   # At loop_fps: 5 this means ~0.8s of consistent evidence.
   vote_window: 6

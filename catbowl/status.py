@@ -19,6 +19,7 @@ set status_port: null if the network is shared.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import logging
 import sys
 import threading
@@ -54,6 +55,7 @@ PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=
 </style>
 <h1>catbowl <span id=up></span></h1><div id=bowls></div>
 <p><a href="/sort">sort captured photos</a> · <a href="/browse">browse</a></p>
+<h1>model <span id=trained></span></h1><table id=models></table>
 <h1>recent</h1><table id=events></table>
 <script>
 async function tick(){
@@ -77,6 +79,17 @@ async function tick(){
  events.innerHTML = s.recent_events.map(e =>
    `<tr><td>${e.time}<td>${e.bowl}<td>${e.kind}<td>${e.cat||''}<td>${JSON.stringify(e.detail)}</tr>`).join('');
 }
+async function models_(){
+ const h = await (await fetch('/models.json')).json().catch(() => []);
+ if (!h.length) { trained.textContent = '· no nightly training yet'; return; }
+ const pc = v => Math.round(v*100) + '%';
+ trained.textContent = '· nightly retrain, per visit (share of visits)';
+ models.innerHTML = '<tr><td>trained<td>photos<td>F opens / wrong<td>J opens / wrong<td>K opens / wrong<td>empty opens<td>floor</tr>' +
+  h.slice(-14).reverse().map(m => `<tr><td>${m.trained}<td>${Object.values(m.cats).reduce((a,c)=>a+c.photos,0)+m.junk.photos}` +
+   ['F','J','K'].map(c => `<td>${pc(m.cats[c].opens)} / ${pc(m.cats[c].wrong_cat)}`).join('') +
+   `<td>${pc(m.junk.opens)}<td>${m.floor}</tr>`).join('');
+}
+models_(); setInterval(models_, 600000);
 async function hold(bowl, lid){
  await fetch('/control', {method:'POST', headers:{'Content-Type':'application/json'},
                           body: JSON.stringify({bowl, lid})});
@@ -335,6 +348,10 @@ def _handler_for(app):
             try:
                 if path in ("/", "/index.html"):
                     self._send(PAGE.encode(), "text/html; charset=utf-8")
+                elif path == "/models.json":
+                    history = Path(app.cfg.recognition.classifier).parent / "history.json"
+                    body = history.read_bytes() if history.exists() else b"[]"
+                    self._send(body, "application/json")
                 elif path == "/status.json":
                     self._send(json.dumps(app.status(), default=str).encode(), "application/json")
                 elif path.startswith("/snapshot/") and path.endswith(".jpg"):

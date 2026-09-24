@@ -1,0 +1,12 @@
+[Unit]
+Description=catbowl nightly retrain on sorted Pi-camera photos
+After=network.target
+
+[Service]
+Type=oneshot
+User=rjweldon
+WorkingDirectory=/home/rjweldon/Projects/0001_Catbowl
+Nice=10
+ExecStart=/home/rjweldon/Projects/0001_Catbowl/.venv/bin/python tools/nightly_train.py
+# "+" runs as root: restart the bowl only if a new model was swapped in.
+ExecStartPost=+/bin/sh -c 'if [ -e models/.restart ]; then rm models/.restart; systemctl restart catbowl; fi'
