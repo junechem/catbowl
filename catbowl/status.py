@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import logging
+import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -55,7 +56,10 @@ PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=
 </style>
 <h1>catbowl <span id=up></span></h1><div id=bowls></div>
 <p><a href="/sort">sort captured photos</a> · <a href="/browse">browse</a></p>
-<h1>model <span id=trained></span></h1><table id=models></table>
+<h1>model <span id=trained></span></h1>
+<div class=btns style="max-width:420px"><button id=retrain onclick="retrainNow()">retrain now</button></div>
+<div class=held id=training></div>
+<table id=models></table>
 <h1>recent</h1><table id=events></table>
 <script>
 async function tick(){
@@ -89,7 +93,23 @@ async function models_(){
    ['F','J','K'].map(c => `<td>${pc(m.cats[c].opens)} / ${pc(m.cats[c].wrong_cat)}`).join('') +
    `<td>${pc(m.junk.opens)}<td>${m.floor}</tr>`).join('');
 }
+async function trainState(){
+ const t = await (await fetch('/train.json')).json().catch(() => null);
+ if (!t) return;
+ const running = t.state === 'activating' || t.state === 'active';
+ retrain.disabled = running;
+ training.textContent = running
+  ? 'retraining - about 6 minutes; the bowl restarts when the new model is in'
+  : (t.last ? 'last retrain: ' + t.last : '');
+}
+async function retrainNow(){
+ if (!confirm('Retrain on the sorted photos now? The bowl restarts when it is done.')) return;
+ const r = await fetch('/train', {method:'POST'});
+ if (!r.ok) alert(await r.text());
+ trainState();
+}
 models_(); setInterval(models_, 600000);
+trainState(); setInterval(trainState, 10000);
 async function hold(bowl, lid){
  await fetch('/control', {method:'POST', headers:{'Content-Type':'application/json'},
                           body: JSON.stringify({bowl, lid})});
@@ -339,6 +359,23 @@ async function move(target){
 """
 
 
+TRAIN_UNIT = "catbowl-train.service"
+
+
+def _train_state() -> dict:
+    """Whether the retrain unit is running, and how its last run ended."""
+    def show(prop: str) -> str:
+        try:
+            return subprocess.run(["systemctl", "show", "-P", prop, TRAIN_UNIT],
+                                  capture_output=True, text=True, timeout=5).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+    finished = show("ExecMainExitTimestamp")
+    result = show("Result")
+    return {"state": show("ActiveState"),
+            "last": f"{finished} ({result})" if finished else ""}
+
+
 def _handler_for(app):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -367,6 +404,8 @@ def _handler_for(app):
             try:
                 if path in ("/", "/index.html"):
                     self._send(PAGE.encode(), "text/html; charset=utf-8")
+                elif path == "/train.json":
+                    self._json(_train_state())
                 elif path == "/models.json":
                     history = Path(app.cfg.recognition.classifier).parent / "history.json"
                     body = history.read_bytes() if history.exists() else b"[]"
@@ -403,6 +442,14 @@ def _handler_for(app):
                 return
             if path == "/sort/move":
                 self._move()
+                return
+            if path == "/train":
+                done = subprocess.run(["systemctl", "start", "--no-block", TRAIN_UNIT],
+                                      capture_output=True, text=True, timeout=10)
+                if done.returncode:
+                    self._send((done.stderr or "could not start").encode(), "text/plain", 500)
+                else:
+                    self._json(_train_state())
                 return
             if path == "/sort/file_all":
                 self._file_all()

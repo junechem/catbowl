@@ -1,0 +1,9 @@
+// Let the catbowl service (user rjweldon) start its own retrain from the
+// status page's "retrain now" button. Only this one unit, only start/stop.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "catbowl-train.service" &&
+        subject.user == "rjweldon") {
+        return polkit.Result.YES;
+    }
+});

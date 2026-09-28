@@ -377,3 +377,7 @@ right, not usable. Instead, visits the model is very sure of (2+ frames at
 browse has a "file all into <cat>" button there. Measured: 42-57% of photos
 sorted this way, 3-4% of them wrong. Browse tabs now list the most recently
 filed photo first (mtime stamped on every move).
+
+Status page: "retrain now" button starts `catbowl-train.service` (allowed for
+rjweldon by `systemd/50-catbowl-train.rules` in /etc/polkit-1/rules.d/).
+Browse "next page" no longer skips photos after filing some.
