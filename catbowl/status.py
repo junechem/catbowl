@@ -278,8 +278,8 @@ function draw(){
      <span>${total ? offset+1 : 0}-${offset+page.length} of ${total}</span>
      <button onclick="hop(1)" ${offset+page.length > last ? 'disabled' : ''}>older</button>`
   : `<span>${total} photo${total===1?'':'s'}</span>`;
- // A sure/<cat> folder, once skimmed and cleaned, is filed in one go.
- const cat = bucket.startsWith('sure/') ? bucket.slice(5) : null;
+ // A sure/ or proposed/ folder, once skimmed and cleaned, is filed in one go.
+ const cat = /^(sure|proposed)\//.test(bucket) ? bucket.split('/')[1] : null;
  fileall.innerHTML = cat && total && targets.includes(cat)
   ? `<button onclick="fileAll('${cat}')">file all ${total} into ${cat}</button>` : '';
  sheet.className = picked ? 'show' : '';

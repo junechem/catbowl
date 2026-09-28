@@ -408,3 +408,11 @@ def test_sending_a_proposal_back_to_the_queue_only_drops_the_guess(sorter, colle
     assert not (collected / "proposed" / "K" / name).exists()
     assert name in sorter.pending(refresh=True), "it still needs sorting by hand"
     assert len(list((collected / "unsorted").iterdir())) == 5, "no duplicate in the queue"
+
+
+def test_a_proposed_folder_files_in_one_go_too(sorter, collected):
+    proposed = collected / "proposed" / "J"
+    proposed.mkdir(parents=True)
+    (proposed / "bowl1-20260928-100000-000.jpg").write_bytes(b"\xff\xd8x")
+    assert sorter.file_all("proposed/J", "J") == 1
+    assert len(list((collected / "J").glob("*.jpg"))) == 1
