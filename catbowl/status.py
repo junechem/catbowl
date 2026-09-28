@@ -308,7 +308,9 @@ async function fileAll(cat){
 }
 
 function go(b){ if (b !== bucket){ bucket = b; offset = 0; load(); } }
-function hop(dir){ offset = Math.max(0, offset + dir * limit); load(); }
+// Forward by what is still on this page, not by a full page: photos filed away
+// from it have left the folder, so everything after them has moved up.
+function hop(dir){ offset = Math.max(0, dir > 0 ? offset + page.length : offset - limit); load(); }
 function tap(n){ picked = (n === picked) ? null : n; draw(); }
 
 async function move(target){
