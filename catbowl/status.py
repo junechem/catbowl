@@ -251,6 +251,7 @@ BROWSE_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content=
 <div class=tabs id=tabs></div>
 <div id=grid></div>
 <div class=pager id=pager></div>
+<div class=pager id=fileall></div>
 <div id=sheet><img id=peek alt="" hidden><div class=who id=who></div><div class=keys id=keys></div></div>
 <script>
 let buckets = [], targets = [], counts = {}, bucket = 'unsorted', offset = 0, limit = 40,
@@ -277,17 +278,33 @@ function draw(){
      <span>${total ? offset+1 : 0}-${offset+page.length} of ${total}</span>
      <button onclick="hop(1)" ${offset+page.length > last ? 'disabled' : ''}>older</button>`
   : `<span>${total} photo${total===1?'':'s'}</span>`;
+ // A sure/<cat> folder, once skimmed and cleaned, is filed in one go.
+ const cat = bucket.startsWith('sure/') ? bucket.slice(5) : null;
+ fileall.innerHTML = cat && total && targets.includes(cat)
+  ? `<button onclick="fileAll('${cat}')">file all ${total} into ${cat}</button>` : '';
  sheet.className = picked ? 'show' : '';
  peek.hidden = !picked;
  if (picked) peek.src = `/sort/photo/${picked}?bucket=${bucket}`;
  who.textContent = picked || '';
  // On a proposals tab the photo is still in the queue - it was copied, not
  // moved - so "unsorted" would read as a move to where it already is.
- const reviewing = bucket.startsWith('proposed/');
+ const reviewing = bucket.startsWith('proposed/') || bucket.startsWith('sure/');
  keys.innerHTML = targets.filter(b => b !== bucket).map(b =>
    `<button onclick="move('${b}')">${
       reviewing && b === 'unsorted' ? 'not sure - leave in queue' : b}</button>`).join('') +
    `<button class=minor onclick="tap(null)">close</button>`;
+}
+
+async function fileAll(cat){
+ if (busy || !confirm(`Move all ${total} photos in ${bucket} into ${cat}?`)) return;
+ busy = true;
+ try {
+  const r = await fetch('/sort/file_all', {method:'POST', headers:{'Content-Type':'application/json'},
+                                           body: JSON.stringify({from: bucket, to: cat})});
+  if (r.ok) counts = (await r.json()).counts || counts;
+  else alert(await r.text());
+ } finally { busy = false; }
+ offset = 0; load();
 }
 
 function go(b){ if (b !== bucket){ bucket = b; offset = 0; load(); } }
@@ -385,6 +402,9 @@ def _handler_for(app):
             if path == "/sort/move":
                 self._move()
                 return
+            if path == "/sort/file_all":
+                self._file_all()
+                return
             if path != "/control":
                 self._send(b"not found", "text/plain", 404)
                 return
@@ -453,6 +473,21 @@ def _handler_for(app):
                 self._send(b"error", "text/plain", 500)
             else:
                 self._json({"name": landed, "counts": sorter.counts()})
+
+        def _file_all(self) -> None:
+            sorter = self._sorter()
+            if sorter is None:
+                return
+            try:
+                body = self._read_json()
+                moved = sorter.file_all(str(body.get("from", "")), str(body.get("to", "")))
+            except (SortError, ValueError, TypeError) as exc:
+                self._send(str(exc).encode(), "text/plain", 400)
+            except Exception:
+                log.exception("file_all request failed")
+                self._send(b"error", "text/plain", 500)
+            else:
+                self._json({"moved": moved, "counts": sorter.counts()})
 
         def _photo(self, name: str) -> None:
             """Serve one captured photo straight off the disk.

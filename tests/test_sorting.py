@@ -222,17 +222,29 @@ def test_the_last_few_photos_can_still_be_sorted(server, collected):
 # browsing and re-filing
 # --------------------------------------------------------------------------- #
 
-def test_a_bucket_lists_newest_first_across_bowls(sorter, collected):
-    """A mis-sort is nearly always one just made, so it has to be at the top."""
-    for i, name in enumerate(sorter.pending()):
+def test_a_bucket_lists_the_most_recently_filed_first(sorter, collected):
+    """A mis-sort is nearly always one just made, so it has to be at the top,
+    whenever the photo itself was taken."""
+    names = sorter.pending()
+    for name in reversed(names):            # file the newest photo first
         sorter.assign(name, "J")
-    # A photo from a different bowl, taken between two of the others.
-    (collected / "J" / "bowl2-20260902-090000-000.jpg").write_bytes(b"\xff\xd8x")
+    listed, total = sorter.listing("J")
+    assert total == 5
+    assert listed == names, "the photo filed last is first, though it was taken first"
 
-    names, total = sorter.listing("J")
-    assert total == 6
-    assert names[0] == "bowl1-20260904-120000-000.jpg", "the newest, whichever bowl"
-    assert names == sorted(names, key=lambda n: n.split("-", 1)[1], reverse=True)
+
+def test_a_sure_folder_is_browsable_and_files_in_one_go(sorter, collected):
+    sure = collected / "sure" / "F"
+    sure.mkdir(parents=True)
+    for i in range(3):
+        (sure / f"bowl1-20260928-10000{i}-000.jpg").write_bytes(b"\xff\xd8x")
+    assert "sure/F" in sorter.review_buckets
+    assert sorter.counts()["sure/F"] == 3
+    assert sorter.file_all("sure/F", "F") == 3
+    assert len(list((collected / "F").glob("*.jpg"))) == 3
+    assert list(sure.glob("*.jpg")) == []
+    with pytest.raises(SortError):
+        sorter.file_all("J", "F")
 
 
 def test_a_bucket_pages(sorter):

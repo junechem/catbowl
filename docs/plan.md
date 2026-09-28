@@ -370,3 +370,10 @@ Nightly retrain installed: `catbowl-train.timer` runs `tools/nightly_train.py`
 at 00:00, retrains only if the sorted Pi-camera set changed, backs up to
 `models/backups/`, logs scores to `models/history.json` (shown on the status
 page) and restarts catbowl. About 6 minutes on the Pi.
+
+**2026-09-28.** Unsupervised clustering tested on the Pi-camera photos: 40-70%
+right, not usable. Instead, visits the model is very sure of (2+ frames at
+0.95, all naming one cat) now settle into `sure/<cat>` beside `proposed/`;
+browse has a "file all into <cat>" button there. Measured: 42-57% of photos
+sorted this way, 3-4% of them wrong. Browse tabs now list the most recently
+filed photo first (mtime stamped on every move).

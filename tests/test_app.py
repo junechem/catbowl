@@ -344,7 +344,7 @@ def _bank(worker, verdict, probabilities, taken):
 def test_a_blurred_frame_is_refiled_once_the_visit_has_been_seen(tmp_path):
     """The live half of the visit prior: unsure in the middle of a sure visit."""
     worker = _sorting_worker(tmp_path)
-    sure = {"J": 0.97, "K": 0.02, "_other": 0.01}
+    sure = {"J": 0.90, "K": 0.07, "_other": 0.03}   # sure, but not very sure
     blur = {"J": 0.44, "K": 0.31, "_other": 0.25}
     for index, probabilities in enumerate([sure, sure, blur, sure, sure]):
         verdict = "J" if probabilities is sure else "unsure"
@@ -400,3 +400,26 @@ def test_a_visit_of_nothing_is_settled_into_discard(tmp_path):
     assert worker._settle_visit(now=1100.0) == 1
     assert len(list((tmp_path / "proposed" / "discard").glob("*.jpg"))) == 4
     assert not (tmp_path / "proposed" / "_other").exists()
+
+
+def test_a_very_sure_visit_is_settled_into_sure(tmp_path):
+    """Two or more frames at 0.95+ that all name one cat: filed apart, in
+    sure/<cat>, to be skimmed and filed in one go - blurred frames too."""
+    worker = _sorting_worker(tmp_path)
+    sure = {"J": 0.97, "K": 0.02, "_other": 0.01}
+    blur = {"J": 0.50, "K": 0.30, "_other": 0.20}
+    for index, probabilities in enumerate([sure, blur, sure]):
+        _bank(worker, "J" if probabilities is sure else "unsure", probabilities,
+              taken=1000.0 + index)
+
+    assert worker._settle_visit(now=1100.0) == 3
+    assert len(list((tmp_path / "sure" / "J").glob("*.jpg"))) == 3
+    assert list((tmp_path / "proposed").rglob("*.jpg")) == []
+
+
+def test_one_very_sure_frame_is_not_enough(tmp_path):
+    worker = _sorting_worker(tmp_path)
+    _bank(worker, "J", {"J": 0.97, "K": 0.02, "_other": 0.01}, taken=1000.0)
+    _bank(worker, "J", {"J": 0.90, "K": 0.05, "_other": 0.05}, taken=1001.0)
+    worker._settle_visit(now=1100.0)
+    assert not (tmp_path / "sure").exists()

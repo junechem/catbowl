@@ -140,6 +140,23 @@ def visit_verdict(shots: list[Shot], threshold: float,
     return Verdict(winner, mean)
 
 
+# A visit is "very sure" when at least two frames clear this, every one of them
+# names the same cat, and none names another. Measured on Pi-camera photos
+# (2026-09-28), a model trained on the days before sorted 42-57% of later photos
+# this way, and 3-4% of those were wrong - so they get a folder of their own,
+# `sure/<cat>`, to be skimmed for mistakes and then filed in one go.
+VERY_SURE = 0.95
+
+
+def very_sure(shots: list[Shot], other: str = "_other") -> str | None:
+    """The cat this visit certainly is, or None."""
+    names = [max(s.probabilities, key=lambda k: s.probabilities[k])
+             for s in shots if s.confidence >= VERY_SURE and s.probabilities]
+    if len(names) < 2 or len(set(names)) != 1 or names[0] == other:
+        return None
+    return names[0]
+
+
 @dataclass
 class Outcome:
     """What presorting a pile did, for the summary it prints."""

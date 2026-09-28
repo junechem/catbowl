@@ -17,9 +17,9 @@ from .config import AppConfig, BowlConfig, CaptureConfig
 from .controller import BowlController
 from .detector import Detector, build_detector
 from .events import Event, EventLog
-from .presort import VISIT_GAP_S, Shot, visit_verdict
+from .presort import VISIT_GAP_S, Shot, visit_verdict, very_sure
 from .recognizer import OTHER, Recognizer
-from .sorting import DISCARD, Sorter
+from .sorting import DISCARD, SURE, Sorter
 
 log = logging.getLogger(__name__)
 
@@ -137,8 +137,21 @@ class BowlWorker(threading.Thread):
         # The model's "none of the cats" is filed under the name a human uses
         # for it, as _verdict_for does frame by frame - not in a folder of its own.
         label = DISCARD if verdict.label == OTHER else verdict.label
+        certain = very_sure(shots)
         moved = 0
-        if label is not None:
+        if certain is not None and self._capture_root is not None:
+            label = certain
+            for path, _ in self._visit:
+                if not path.exists():
+                    continue
+                destination = self._capture_root / SURE / certain
+                destination.mkdir(parents=True, exist_ok=True)
+                try:
+                    path.rename(destination / path.name)
+                    moved += 1
+                except OSError:  # pragma: no cover - a human may have filed it already
+                    log.debug("%s: could not re-file %s", self.cfg.id, path.name)
+        elif label is not None:
             for path, shot in self._visit:
                 if shot.verdict == label or not path.exists():
                     continue
@@ -225,7 +238,8 @@ class BowlWorker(threading.Thread):
         if self._capture_root is None:
             return 0
         total = 0
-        for directory in (self._capture_dir, *sorted((self._capture_root / "proposed").glob("*"))):
+        for directory in (self._capture_dir, *sorted((self._capture_root / "proposed").glob("*")),
+                          *sorted((self._capture_root / SURE).glob("*"))):
             if directory is not None and directory.is_dir():
                 total += sum(1 for _ in directory.glob("*.jpg"))
         return total

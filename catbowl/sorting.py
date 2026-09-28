@@ -40,6 +40,9 @@ UNSORTED = "unsorted"
 # the point of the exercise is to get photos *out* of here and into a bucket a
 # person has vouched for.
 PROPOSED = "proposed"
+# Visits the model was very sure of (presort.very_sure), kept apart from
+# proposed/ so they can be skimmed for mistakes and filed all at once.
+SURE = "sure"
 # One page of the browse grid. Thumbnails are the full captured crops - a few kB
 # each, and no server-side decode - so a page is cheap but not free.
 PAGE_SIZE = 40
@@ -71,6 +74,7 @@ class Sorter:
         self._remaining = 0
         # One step of undo: the last move, as (destination, original name).
         self._last_move: tuple[Path, str] | None = None
+        self._last_stamp = 0
 
     @property
     def review_buckets(self) -> list[str]:
@@ -80,11 +84,14 @@ class Sorter:
         runs long after the service started, and its folders should appear in
         the browser without a restart.
         """
-        if not self.proposed.is_dir():
-            return []
-        with os.scandir(self.proposed) as entries:
-            names = [e.name for e in entries if e.is_dir() and SAFE_BUCKET.match(e.name)]
-        return [f"{PROPOSED}/{name}" for name in sorted(names)]
+        found = []
+        for top in (SURE, PROPOSED):
+            if not (self.root / top).is_dir():
+                continue
+            with os.scandir(self.root / top) as entries:
+                names = [e.name for e in entries if e.is_dir() and SAFE_BUCKET.match(e.name)]
+            found += [f"{top}/{name}" for name in sorted(names)]
+        return found
 
     @property
     def all_buckets(self) -> list[str]:
@@ -158,18 +165,21 @@ class Sorter:
         return path
 
     def listing(self, bucket: str, offset: int = 0, limit: int = PAGE_SIZE) -> tuple[list[str], int]:
-        """One page of a bucket, newest first, with the bucket's total.
+        """One page of a bucket, most recently filed first, with the total.
 
-        Newest first because a mistake is nearly always one just made, and the
-        order comes from the timestamp in the filename rather than from stat():
-        it is the same order, across every bowl, without a syscall per photo.
+        A mistake is nearly always one just made, so the photo tapped a moment
+        ago has to be top-left. Every move stamps the file's mtime with the
+        moment it was filed (see _stamp), so mtime is "when it landed here";
+        the time it was taken breaks ties.
         """
         directory = self.dir_for(bucket)
         if not directory.is_dir():
             return [], 0
         with os.scandir(directory) as entries:
-            names = [entry.name for entry in entries if entry.name.endswith(".jpg")]
-        names.sort(key=_taken_at, reverse=True)
+            found = [(entry.stat().st_mtime_ns, _taken_at(entry.name), entry.name)
+                     for entry in entries if entry.name.endswith(".jpg")]
+        found.sort(reverse=True)
+        names = [name for _, _, name in found]
         offset = max(0, offset)
         return names[offset:offset + max(1, limit)], len(names)
 
@@ -212,6 +222,7 @@ class Sorter:
                 return name
             target = _free_path(target_dir / name)
             os.replace(original, target)
+            self._stamp(target)
             source.unlink()
             self._listed_at = 0.0
             self._forget(name)
@@ -220,10 +231,30 @@ class Sorter:
 
         target = _free_path(target_dir / name)
         os.replace(source, target)          # same filesystem: an atomic rename
+        self._stamp(target)
         if UNSORTED in (source_bucket, target_bucket):
             self._listed_at = 0.0           # the queue's cached listing is stale
         log.info("moved %s: %s -> %s", name, source_bucket, target_bucket)
         return target.name
+
+    def _stamp(self, path: Path) -> None:
+        """Set mtime to now, strictly later than the last photo filed.
+
+        The kernel's own rename timestamps are coarse (a few ms), so two quick
+        taps could tie; this keeps the most recent filing first regardless.
+        """
+        now = max(time.time_ns(), self._last_stamp + 1)
+        self._last_stamp = now
+        os.utime(path, ns=(now, now))
+
+    def file_all(self, source_bucket: str, target_bucket: str) -> int:
+        """Move every photo in *source_bucket* to *target_bucket*. Returns how many."""
+        if source_bucket not in self.review_buckets:
+            raise SortError("only a proposed/ or sure/ folder can be filed all at once")
+        names, _ = self.listing(source_bucket, limit=1_000_000)
+        for name in names:
+            self.move(name, source_bucket, target_bucket)
+        return len(names)
 
     def undo(self) -> str | None:
         """Put the last sorted photo back. One step; that is all a thumb needs."""
